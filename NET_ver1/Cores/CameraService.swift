@@ -49,9 +49,10 @@ final class CameraService: NSObject, ObservableObject {
     @Published private(set) var zoomFactor: CGFloat = 1
     @Published private(set) var position: AVCaptureDevice.Position = .back
     /// Cho biết `ARView` đang nắm quyền điều khiển camera qua `ARWorldTrackingConfiguration`.
-    @Published private(set) var isExternalARActive = false
+    /// Không gắn `@Published` vì được cập nhật từ `UIViewRepresentable.makeUIView/updateUIView`.
+    private(set) var isExternalARActive = false
     /// Cho biết ARKit đã nhận diện được mặt sàn thật và ghim cứng mẫu 3D xuống đất hay chưa.
-    @Published private(set) var isFloorLocked = false
+    private(set) var isFloorLocked = false
     /// Yêu cầu đặt lại điểm neo sàn tại toạ độ màn hình khi người dùng chạm vào khung ngắm.
     @Published private(set) var floorAnchorTapPoint: CGPoint?
     @Published private(set) var floorAnchorTapID = UUID()
@@ -64,7 +65,7 @@ final class CameraService: NSObject, ObservableObject {
     ///
     /// Main actor là nguồn sự thật, nhưng analyzer đọc từ `analysisQueue` nên
     /// giá trị cũng được đẩy sang `analysisConfiguration`.
-    @Published var viewportSize: CGSize = .zero {
+    var viewportSize: CGSize = .zero {
         didSet {
             let size = viewportSize
             analysisConfiguration.update { $0.viewportSize = size }
@@ -145,19 +146,22 @@ final class CameraService: NSObject, ObservableObject {
     func setExternalARActive(_ active: Bool) {
         guard isExternalARActive != active else { return }
         isExternalARActive = active
+        isFloorLocked = false
         if active {
-            isReady = true
-            isFloorLocked = false
-            setupError = nil
             sessionQueue.async { [weak self] in
                 guard let self, self.session.isRunning else { return }
                 self.session.stopRunning()
             }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if !self.isReady { self.isReady = true }
+                if self.setupError != nil { self.setupError = nil }
+            }
         } else {
-            isFloorLocked = false
             latestARPixelBuffer = nil
-            if isCameraAuthorized {
-                start()
+            Task { @MainActor [weak self] in
+                guard let self, self.isCameraAuthorized else { return }
+                self.start()
             }
         }
     }

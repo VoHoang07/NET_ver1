@@ -620,6 +620,30 @@ Tài liệu này lưu trữ toàn bộ các lỗi (bugs), sự cố kỹ thuật
 
 ---
 
+### BUG-032: `CameraService.setExternalARActive` và `setFloorLocked` phát sự kiện `@Published` đồng bộ bên trong `UIViewRepresentable.makeUIView/updateUIView`
+- **Phân loại**: SwiftUI State / Concurrency / Camera
+- **Mức độ**: Trung bình
+- **Thông báo lỗi gốc (Original Error / Assertion)**:
+  ```text
+  NET_ver1 - 82542SwiftUI
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:147 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:149 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:150 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:151 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:157 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:168 Publishing changes from within view updates is not allowed, this will cause undefined behavior.
+  ```
+- **Triệu chứng**: Khi `TranslucentARViewRepresentable` chạy `makeUIView` hoặc `updateUIView` trên thiết bị thực để khởi tạo hoặc chuyển đổi `ARSession`, Xcode xuất 6 cảnh báo runtime *"Publishing changes from within view updates is not allowed, this will cause undefined behavior"* tại các dòng 147, 149, 150, 151, 157 và 168 của `CameraService.swift`.
+- **Nguyên nhân gốc rễ**:
+  1. `TranslucentARViewRepresentable.makeUIView` và `updateUIView` gọi `coordinator.startWorldTracking(in:)` / `switchToNonAROverlay(in:)` / `reanchorAtScreenPoint(_:)` ngay trong chu kỳ cập nhật View của SwiftUI.
+  2. Các hàm này gọi đồng bộ `cameraService?.setExternalARActive(_:)` và `cameraService?.setFloorLocked(_:)`, vốn đang sửa trực tiếp các thuộc tính gắn `@Published` (`isExternalARActive`, `isReady`, `isFloorLocked`, `setupError`), làm phát tín hiệu `objectWillChange.send()` ngay giữa lúc SwiftUI đang render View.
+- **Giải pháp**:
+  1. Gỡ bỏ `@Published` không cần thiết khỏi `isExternalARActive`, `isFloorLocked` và `viewportSize` trong `CameraService.swift` (do không có View SwiftUI nào đọc trực tiếp các biến nội bộ này).
+  2. Trong `CameraService.setExternalARActive(_:)`, tách phần cập nhật các thuộc tính `@Published` (`isReady`, `setupError`) vào `Task { @MainActor [weak self] in ... }` để sự kiện publish luôn diễn ra ở nhịp kế tiếp của RunLoop, nằm ngoài chu kỳ `makeUIView`/`updateUIView`.
+- **Phòng ngừa & Test**: `FigureAssetTests.testCameraServiceARStateMutationDoesNotPublishSynchronouslyDuringViewUpdate`.
+
+---
+
 ## Biểu Mẫu Nhập Liệu Chuẩn Khi Gặp Bug Mới (Template)
 
 Mỗi khi phát sinh lỗi mới, copy mẫu sau và thêm vào danh sách:

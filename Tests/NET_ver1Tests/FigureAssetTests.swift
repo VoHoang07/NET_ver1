@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import Foundation
 import RealityKit
@@ -927,6 +928,27 @@ final class FigureAssetTests: XCTestCase {
         XCTAssertEqual(meshesAfter, 0, "Toàn bộ ModelComponent của thực thể 3D cũ phải được giải phóng khỏi RAM")
         XCTAssertEqual(scene.children.count, 0, "Toàn bộ cây thực thể con phải được gỡ bỏ")
         XCTAssertNil(scene.parent, "Thực thể gốc phải được tách khỏi parent")
+    }
+
+    func testCameraServiceARStateMutationDoesNotPublishSynchronouslyDuringViewUpdate() {
+        let service = CameraService()
+        var synchronousPublishCount = 0
+        let cancellable = service.objectWillChange.sink { _ in
+            synchronousPublishCount += 1
+        }
+        defer { cancellable.cancel() }
+
+        // Các hàm này được gọi trực tiếp bên trong UIViewRepresentable.makeUIView / updateUIView
+        service.setExternalARActive(true)
+        service.setFloorLocked(true)
+        service.setFloorLocked(false)
+        service.setExternalARActive(false)
+        service.viewportSize = CGSize(width: 390, height: 844)
+
+        XCTAssertEqual(
+            synchronousPublishCount, 0,
+            "Không được phát sự kiện @Published đồng bộ trong lúc makeUIView/updateUIView đang chạy để tránh lỗi 'Publishing changes from within view updates is not allowed'"
+        )
     }
 
     // MARK: - Hỗ trợ
