@@ -659,6 +659,29 @@ Tài liệu này lưu trữ toàn bộ các lỗi (bugs), sự cố kỹ thuật
 
 ---
 
+### BUG-034: Treo `withTaskGroup` trong `GalleryView` khi gặp ảnh iCloud chưa tải & giật khung hình trên Main Thread khi đổi tư thế USDZ / quét sàn AR 60Hz
+- **Phân loại**: Performance / Concurrency / RealityKit / Photos
+- **Mức độ**: Cao
+- **Thông báo lỗi gốc (Original Error / Assertion)**:
+  ```text
+  SWIFT TASK CONTINUATION MISUSE / Hang Risk: GalleryView.thumbnail(for:) continuation never resumes when PHImageManager delivers degraded thumbnail followed by nil final image (iCloud asset with isNetworkAccessAllowed == false); Synchronous Entity.load(contentsOf:) disk I/O and 60Hz ARSessionDelegate raycast/material updates cause main-thread frame drops.
+  ```
+- **Triệu chứng**:
+  1. Mở màn hình Bộ Sưu Tập (`GalleryView`) có nguy cơ treo vĩnh viễn ở vòng xoay `ProgressView` nếu trong 60 ảnh gần nhất có ít nhất 1 ảnh lưu trên iCloud hoặc lỗi tải, đồng thời cấp phát tới 60 thực thể `PHCachingImageManager` cùng lúc.
+  2. Chuyển đổi qua lại giữa 6 tư thế trên thanh `poseStrip` gây khựng nhẹ do đọc và giải mã file `.usdz` đồng bộ từ ổ đĩa trên Main Thread mỗi lần bấm.
+  3. Khi chạy AR thực tế ở 60fps, `ARSessionDelegate.session(_:didUpdate:)` bắn `Task { @MainActor }` liên tục và `updateUIView` gọi `FigureMaterial.apply` trên mọi nhịp render làm tốn CPU/GPU không cần thiết.
+- **Nguyên nhân gốc rễ**:
+  1. Trong `GalleryView.thumbnail(for:)`, điều kiện `guard image != nil, (info?[PHImageResultIsDegradedKey] as? Bool) != true else { return }` bỏ qua cả callback ảnh chất lượng thấp lẫn callback cuối cùng khi `image == nil` (lỗi mạng/iCloud), khiến `withCheckedContinuation` không bao giờ `resume`.
+  2. `FigureAssetLoader.load` gọi `Entity.load(contentsOf: url)` trực tiếp từ đĩa mỗi lần đổi dáng thay vì lưu nguyên mẫu (prototype) trong bộ nhớ để `clone(recursive: true)`.
+  3. Thiếu cổng chặn (backpressure gate) tại `ingestARPixelBuffer` và `session(_:didUpdate:)`, cũng như thiếu kiểm tra thay đổi trạng thái `currentIsAligned` trước khi duyệt cây `Entity` gán lại `SimpleMaterial`.
+- **Giải pháp**:
+  1. Trong `GalleryView.swift`: dùng `PHImageManager.default()`, bật `options.isNetworkAccessAllowed = true`, và xử lý đầy đủ nhánh `PHImageCancelledKey` / `PHImageErrorKey` để đảm bảo `continuation.resume` luôn được gọi 100%.
+  2. Trong `FigureAssetLoader.swift`: bổ sung `prototypeCache: [URL: Entity]` trên `@MainActor` để chỉ đọc đĩa 1 lần duy nhất cho mỗi tư thế và nhân bản cực nhanh (`clone(recursive: true)`) trong `< 1ms`.
+  3. Trong `CameraService.swift`, `FrameAnalyzer.swift`, `TranslucentSceneView.swift` và `CameraView.swift`: thêm cổng chống tồn đọng hàng đợi `isAnalyzingARFrame` & `isProcessingARFrameOnMainActor`, tái sử dụng các đối tượng `VNRequest` và bộ rung Haptic, giới hạn tần suất quét tự động 15 điểm khi lia máy (~6Hz), và chỉ cập nhật `FigureMaterial` / `SceneLighting` khi trạng thái thực sự thay đổi.
+- **Phòng ngừa & Test**: `FigureAssetTests.testFigureAssetLoaderPrototypeCacheProducesIndependentClonesQuickly`.
+
+---
+
 ## Biểu Mẫu Nhập Liệu Chuẩn Khi Gặp Bug Mới (Template)
 
 Mỗi khi phát sinh lỗi mới, copy mẫu sau và thêm vào danh sách:

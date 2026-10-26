@@ -150,20 +150,32 @@ struct GalleryView: View {
     }
 
     private static func thumbnail(for asset: PHAsset) async -> UIImage? {
-        let manager = PHCachingImageManager()
         let scale = await MainActor.run { UIScreen.main.scale }
         let target = CGSize(width: 200 * scale, height: 200 * scale)
 
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
 
         return await withCheckedContinuation { continuation in
             var resumed = false
-            manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFill, options: options) { image, info in
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: target,
+                contentMode: .aspectFill,
+                options: options
+            ) { image, info in
                 guard !resumed else { return }
-                // `opportunistic` có thể gọi lại nhiều lần; chỉ lấy lần đầu có ảnh thật.
-                guard image != nil, (info?[PHImageResultIsDegradedKey] as? Bool) != true else { return }
+                let isCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+                let hasError = info?[PHImageErrorKey] != nil
+                if isCancelled || hasError {
+                    resumed = true
+                    continuation.resume(returning: image)
+                    return
+                }
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                guard !isDegraded else { return }
                 resumed = true
                 continuation.resume(returning: image)
             }
@@ -235,6 +247,7 @@ struct GalleryDetailView: View {
         let options = PHImageRequestOptions()
         options.deliveryMode = .highQualityFormat
         options.resizeMode = .none
+        options.isNetworkAccessAllowed = true
 
         let image: UIImage? = await withCheckedContinuation { continuation in
             var hasResumed = false
@@ -249,10 +262,11 @@ struct GalleryDetailView: View {
                 let failed = (info?[PHImageCancelledKey] as? Bool) == true || info?[PHImageErrorKey] != nil
                 guard !failed else {
                     hasResumed = true
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: image)
                     return
                 }
-                guard image != nil else { return }
+                let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                guard !isDegraded else { return }
                 hasResumed = true
                 continuation.resume(returning: image)
             }

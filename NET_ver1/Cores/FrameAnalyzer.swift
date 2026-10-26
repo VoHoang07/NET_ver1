@@ -34,6 +34,18 @@ nonisolated final class FrameAnalyzer: @unchecked Sendable {
     nonisolated private static let clippedLumaThreshold: UInt8 = 245
     nonisolated private static let shadowLumaThreshold: UInt8 = 18
 
+    /// Tái sử dụng các đối tượng `VNRequest` trên `analysisQueue` để tránh cấp phát lại mỗi khung hình.
+    private let faceRequest = VNDetectFaceRectanglesRequest()
+    private let landmarkRequest = VNDetectFaceLandmarksRequest()
+    private let horizonRequest = VNDetectHorizonRequest()
+    private let poseRequest = VNDetectHumanBodyPoseRequest()
+    private let segmentationRequest: VNGeneratePersonSegmentationRequest = {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .fast
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        return request
+    }()
+
     // MARK: - Phân tích
 
     /// - Parameters:
@@ -124,23 +136,11 @@ nonisolated final class FrameAnalyzer: @unchecked Sendable {
     ) -> VisionResult {
         var result = VisionResult()
 
-        let faceRequest = VNDetectFaceRectanglesRequest()
-        let landmarkRequest = VNDetectFaceLandmarksRequest()
-        let horizonRequest = VNDetectHorizonRequest()
-
         // Đo tư thế: vai/hông/gối là thứ quyết định người mẫu có đang tạo dáng
         // đúng không. Không có nó thì app chỉ hướng dẫn được, không chấm được.
-        let poseRequest = VNDetectHumanBodyPoseRequest()
-
         var requests: [VNRequest] = [faceRequest, landmarkRequest, horizonRequest, poseRequest]
-
-        var segmentationRequest: VNGeneratePersonSegmentationRequest?
         if wantsSegmentation {
-            let request = VNGeneratePersonSegmentationRequest()
-            request.qualityLevel = .fast
-            request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-            segmentationRequest = request
-            requests.append(request)
+            requests.append(segmentationRequest)
         }
 
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation)
@@ -165,7 +165,7 @@ nonisolated final class FrameAnalyzer: @unchecked Sendable {
             result.horizonAngle = horizonObservation.angle
         }
 
-        if let segmentationRequest {
+        if wantsSegmentation {
             let maskObservations: [VNPixelBufferObservation] = segmentationRequest.results ?? []
             result.subjectMask = maskObservations.first?.pixelBuffer
             // Bbox chủ thể suy ra từ chính mask, không cần request saliency riêng.

@@ -951,6 +951,26 @@ final class FigureAssetTests: XCTestCase {
         )
     }
 
+    func testFigureAssetLoaderPrototypeCacheProducesIndependentClonesQuickly() throws {
+        FigureAssetLoader.clearCache()
+        let pose = ShootingPose.standingStraight
+        let metrics = pose.metrics(userHeight: 1.70)
+
+        let first = try XCTUnwrap(FigureAssetLoader.load(pose: pose, metrics: metrics))
+        let second = try XCTUnwrap(FigureAssetLoader.load(pose: pose, metrics: metrics))
+
+        XCTAssertFalse(
+            first === second,
+            "Mỗi lần gọi FigureAssetLoader.load phải trả về một bản sao Entity độc lập từ bộ đệm nguyên mẫu"
+        )
+
+        first.position.x = 99
+        XCTAssertEqual(
+            second.position.x, 0, accuracy: 0.0001,
+            "Thay đổi transform trên bản sao thứ nhất không được làm ảnh hưởng tới bản sao thứ hai"
+        )
+    }
+
     // MARK: - Hỗ trợ
 
     private func load(_ pose: ShootingPose) -> Entity? {

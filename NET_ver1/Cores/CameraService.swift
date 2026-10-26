@@ -21,13 +21,18 @@ final class CameraService: NSObject, ObservableObject {
     private nonisolated(unsafe) let photoOutput = AVCapturePhotoOutput()
     private nonisolated(unsafe) let videoOutput = AVCaptureVideoDataOutput()
     private nonisolated let frameAnalyzer = FrameAnalyzer()
-    private let ciContext = CIContext()
+    private let ciContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .cacheIntermediates: false
+    ])
 
     /// Số khung hình giữa hai lần phân tích. 10 fps đủ để phản hồi tức thì mà
     /// không làm nóng máy.
     nonisolated private static let analysisIntervalInFrames = 6
-    /// Chỉ đọc/ghi trên `analysisQueue` nên không cần khóa main actor.
+    /// Chỉ đọc/ghi trên `analysisQueue` hoặc cổng điều phối AR nên không cần khóa main actor.
     private nonisolated(unsafe) var framesSinceLastAnalysis = 0
+    /// Cổng chống tồn đọng hàng đợi (backpressure gate): đảm bảo tối đa 1 tác vụ Vision chạy tại một thời điểm.
+    private nonisolated(unsafe) var isAnalyzingARFrame = false
 
     private nonisolated(unsafe) var isConfigured = false
     private nonisolated(unsafe) var pendingMoods: [Int64: Mood] = [:]
@@ -177,11 +182,14 @@ final class CameraService: NSObject, ObservableObject {
     nonisolated func ingestARPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
         latestARPixelBuffer = pixelBuffer
         framesSinceLastAnalysis += 1
-        guard framesSinceLastAnalysis >= Self.analysisIntervalInFrames else { return }
+        guard framesSinceLastAnalysis >= Self.analysisIntervalInFrames, !isAnalyzingARFrame else { return }
         framesSinceLastAnalysis = 0
+        isAnalyzingARFrame = true
 
         analysisQueue.async { [weak self] in
-            guard let self, let currentBuffer = self.latestARPixelBuffer else { return }
+            guard let self else { return }
+            defer { self.isAnalyzingARFrame = false }
+            guard let currentBuffer = self.latestARPixelBuffer else { return }
             let configuration = self.analysisConfiguration.current
             let viewport = configuration.viewportSize
             let safeArea: SafeArea? = viewport.width > 0 && viewport.height > 0

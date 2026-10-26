@@ -201,14 +201,15 @@ struct CameraView: View {
 
     // MARK: - Haptics
 
+    private static let selectionFeedback = UISelectionFeedbackGenerator()
+    private static let shutterFeedback = UIImpactFeedbackGenerator(style: .medium)
+
     private func triggerSelectionHaptic() {
-        let generator = UISelectionFeedbackGenerator()
-        generator.selectionChanged()
+        Self.selectionFeedback.selectionChanged()
     }
 
     private func triggerShutterHaptic() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
+        Self.shutterFeedback.impactOccurred()
     }
 
     // MARK: - Top Bar (Chỉ 1 hàng duy nhất, sạch sẽ, không viền thừa iOS 26)

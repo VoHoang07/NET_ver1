@@ -43,6 +43,18 @@ enum FigureAssetLoader {
         ) != nil
     }
 
+    /// Bộ đệm nguyên mẫu (prototype cache) trong RAM cho các file `.usdz` đã đọc từ đĩa.
+    /// Khi chuyển tư thế, ứng dụng chỉ cần nhân bản (`clone(recursive: true)`) từ nguyên mẫu
+    /// trong bộ nhớ (< 1ms) thay vì đọc và giải mã lại file USDZ đồng bộ trên Main Thread.
+    @MainActor
+    private static var prototypeCache: [URL: Entity] = [:]
+
+    /// Giải phóng bộ đệm nguyên mẫu khi cần thu hồi bộ nhớ.
+    @MainActor
+    static func clearCache() {
+        prototypeCache.removeAll()
+    }
+
     /// Tải người ở đúng tạo dáng, chuẩn hoá tỉ lệ theo chiều cao người mẫu.
     ///
     /// - Returns: `nil` khi không có file hoặc load lỗi — khi đó dùng hình khối.
@@ -59,15 +71,22 @@ enum FigureAssetLoader {
             return nil
         }
 
+        if let cachedPrototype = prototypeCache[url] {
+            let cloned = cachedPrototype.clone(recursive: true)
+            return wrapScaled(cloned, to: metrics.headHeight)
+        }
+
         do {
             // `Entity.load` đồng bộ, có từ iOS 13 — chạy được cả hai nhánh iOS.
             //
             // - Important: KHÔNG dùng `ModelEntity(contentsOf:loadAsync:)`. Biến thể
             //   đó chỉ có từ **iOS 18**, nên dùng nó là hỏng nhánh iOS 17 — cùng
             //   kiểu lỗi đã xảy ra với `RealityView` trước đó.
-            let entity = try Entity.load(contentsOf: url)
+            let prototype = try Entity.load(contentsOf: url)
+            prototypeCache[url] = prototype
+            let cloned = prototype.clone(recursive: true)
 
-            return wrapScaled(entity, to: metrics.headHeight)
+            return wrapScaled(cloned, to: metrics.headHeight)
         } catch {
             return nil
         }

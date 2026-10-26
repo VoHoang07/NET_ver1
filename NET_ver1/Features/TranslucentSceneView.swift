@@ -611,6 +611,7 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
         var camera: PerspectiveCamera?
         var currentPoseID: String?
         var currentMetrics: FigureMetrics?
+        var currentIsAligned: Bool?
         var currentPose: ShootingPose = .seatedStraight
         var currentZoomFactor: CGFloat = 1.0
         var isTemplateVisible: Bool = true
@@ -629,9 +630,13 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
         var targetAnchorOrientation: simd_quatf = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0))
         var stableEstimateCount = 0
         var unanchoredFrameCount = 0
+        var framesSinceLastAutoScan = 0
+        var lastAmbientIntensity: Float = -1000
         var isUserPinned = false
         var lastEstimatedFloorY: Float?
         var sceneUpdateSubscription: Cancellable?
+        /// Cổng chống nghẽn MainActor khi `ARSessionDelegate` bắn 60 frame/giây.
+        nonisolated(unsafe) var isProcessingARFrameOnMainActor = false
 
         #if !targetEnvironment(simulator)
         var trackedRaycast: ARTrackedRaycast?
@@ -875,6 +880,7 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
                 }
 
                 if !isUserPinned {
+                    framesSinceLastAutoScan += 1
                     let toAnchor = SIMD3<Float>(
                         targetAnchorPosition.x - camPos.x,
                         0,
@@ -898,7 +904,9 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
                         }
                     }
 
-                    if cosAngle < 0.968 || outOfDistanceBand || isProjectedOutOfSweetZone {
+                    // Giới hạn tần suất quét 15 điểm (tối đa ~6 lần/giây khi lia máy) để giữ tốc độ 60fps mượt mà trên Main Thread
+                    if framesSinceLastAutoScan >= 10 && (cosAngle < 0.968 || outOfDistanceBand || isProjectedOutOfSweetZone) {
+                        framesSinceLastAutoScan = 0
                         if let bestHit = findBestRuleOfThirdsFloorHit(
                             in: view,
                             cameraTransform: cameraTransform,
@@ -1336,6 +1344,8 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
         #endif
 
         private func applyAmbientLighting(ambientIntensity: Float, in view: ARView) {
+            guard abs(ambientIntensity - lastAmbientIntensity) >= 15 else { return }
+            lastAmbientIntensity = ambientIntensity
             let factor = GuideCamera.ambientLightFactor(ambientIntensity: ambientIntensity)
             view.environment.lighting.intensityExponent = log2(max(factor, 0.25))
             SceneLighting.updateIntensity(in: lights, factor: factor)
@@ -1426,6 +1436,7 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
         coordinator.lights = sceneLights
         coordinator.currentPoseID = pose.id
         coordinator.currentMetrics = metrics
+        coordinator.currentIsAligned = isAligned
         coordinator.currentPose = pose
         coordinator.currentZoomFactor = zoomFactor
         coordinator.isTemplateVisible = isTemplateVisible
@@ -1495,6 +1506,7 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
             }
             coordinator.currentPoseID = pose.id
             coordinator.currentMetrics = metrics
+            coordinator.currentIsAligned = isAligned
             if coordinator.isUsingWorldTracking {
                 coordinator.adjustPlacementForPoseChange()
             } else {
@@ -1507,9 +1519,12 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
             coordinator.applyFallbackCameraTransform()
         }
 
-        // Cập nhật màu lớp da khi trạng thái đạt/không đạt đổi.
-        guard let root = coordinator.root else { return }
-        FigureMaterial.apply(to: root, isAligned: isAligned)
+        // Chỉ cập nhật vật liệu khi trạng thái khớp tư thế (`isAligned`) thực sự thay đổi,
+        // tránh duyệt cây Entity và cấp phát lại SimpleMaterial trên mỗi khung cập nhật SwiftUI.
+        if coordinator.currentIsAligned != isAligned, let root = coordinator.root {
+            coordinator.currentIsAligned = isAligned
+            FigureMaterial.apply(to: root, isAligned: isAligned)
+        }
     }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
@@ -1530,6 +1545,9 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
 #if !targetEnvironment(simulator)
 extension TranslucentARViewRepresentable.Coordinator: ARSessionDelegate, ARCoachingOverlayViewDelegate {
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard !isProcessingARFrameOnMainActor else { return }
+        isProcessingARFrameOnMainActor = true
+
         let pixelBuffer = frame.capturedImage
         let camTransform = frame.camera.transform
         let ambientIntensity = frame.lightEstimate.map { Float($0.ambientIntensity) }
@@ -1559,6 +1577,7 @@ extension TranslucentARViewRepresentable.Coordinator: ARSessionDelegate, ARCoach
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.isProcessingARFrameOnMainActor = false }
             self.cameraService?.ingestARPixelBuffer(capturedPixelBuffer)
             self.updateWorldFloorAnchor(
                 cameraTransform: camTransform,
