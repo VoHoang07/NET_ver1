@@ -15,9 +15,8 @@ final class CameraService: NSObject, ObservableObject {
     nonisolated(unsafe) let session = AVCaptureSession()
 
     private let sessionQueue = DispatchQueue(label: "vn.net.camera.session")
-    /// Queue phân tích khung hình — tách khỏi session queue để việc đo đạc
-    /// không chặn việc cấu hình session.
-    private let analysisQueue = DispatchQueue(label: "vn.net.camera.analysis", qos: .userInitiated)
+    /// Queue phân tích khung hình — đặt `.utility` để tác vụ Vision/ANE không bao giờ tranh chấp ưu tiên với Main Thread UI.
+    private let analysisQueue = DispatchQueue(label: "vn.net.camera.analysis", qos: .utility)
     private nonisolated(unsafe) let photoOutput = AVCapturePhotoOutput()
     private nonisolated(unsafe) let videoOutput = AVCaptureVideoDataOutput()
     private nonisolated let frameAnalyzer = FrameAnalyzer()
@@ -26,13 +25,18 @@ final class CameraService: NSObject, ObservableObject {
         .cacheIntermediates: false
     ])
 
-    /// Số khung hình giữa hai lần phân tích. 10 fps đủ để phản hồi tức thì mà
-    /// không làm nóng máy.
-    nonisolated private static let analysisIntervalInFrames = 6
+    /// Số khung hình giữa hai lần phân tích (~6 fps giúp phản hồi mượt mà và không gây khựng lúc mới mở app).
+    nonisolated private static let analysisIntervalInFrames = 10
+    /// Bỏ qua vài khung hình đầu tiên lúc khởi động để ARSession và giao diện ổn định hoàn toàn trước khi nạp mạng nơ-ron Vision.
+    private nonisolated(unsafe) var warmupFramesRemaining = 18
     /// Chỉ đọc/ghi trên `analysisQueue` hoặc cổng điều phối AR nên không cần khóa main actor.
     private nonisolated(unsafe) var framesSinceLastAnalysis = 0
     /// Cổng chống tồn đọng hàng đợi (backpressure gate): đảm bảo tối đa 1 tác vụ Vision chạy tại một thời điểm.
     private nonisolated(unsafe) var isAnalyzingARFrame = false
+    /// Cờ đồng bộ đa luồng cho biết `ARSession` đang giữ quyền camera, ngăn `sessionQueue` mở `AVCaptureSession` gây đơ lúc khởi động.
+    private nonisolated(unsafe) var isExternalARActiveFlag = false
+    /// Lưu mức zoom hiện tại cho nhánh chụp ảnh từ `ARFrame`.
+    private nonisolated(unsafe) var currentZoomFactorStorage: CGFloat = 1.0
 
     private nonisolated(unsafe) var isConfigured = false
     private nonisolated(unsafe) var pendingMoods: [Int64: Mood] = [:]
@@ -151,6 +155,7 @@ final class CameraService: NSObject, ObservableObject {
     func setExternalARActive(_ active: Bool) {
         guard isExternalARActive != active else { return }
         isExternalARActive = active
+        isExternalARActiveFlag = active
         isFloorLocked = false
         if active {
             sessionQueue.async { [weak self] in
@@ -181,6 +186,10 @@ final class CameraService: NSObject, ObservableObject {
     /// Nhận `CVPixelBuffer` trực tiếp từ `ARFrame.capturedImage` khi chạy `ARWorldTrackingConfiguration`.
     nonisolated func ingestARPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
         latestARPixelBuffer = pixelBuffer
+        if warmupFramesRemaining > 0 {
+            warmupFramesRemaining -= 1
+            return
+        }
         framesSinceLastAnalysis += 1
         guard framesSinceLastAnalysis >= Self.analysisIntervalInFrames, !isAnalyzingARFrame else { return }
         framesSinceLastAnalysis = 0
@@ -223,18 +232,20 @@ final class CameraService: NSObject, ObservableObject {
         setupError = nil
         return
         #else
-        guard !isExternalARActive else {
+        if isExternalARActive || (mode.usesBodyTemplate && position == .back && GuideCamera.supportsRealSpaceAR) {
+            isExternalARActive = true
+            isExternalARActiveFlag = true
             isReady = true
             setupError = nil
             return
         }
         let desiredPosition = position
         sessionQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self, !self.isExternalARActiveFlag else { return }
             if !self.isConfigured {
                 self.configureSession(position: desiredPosition)
             }
-            guard self.isConfigured else { return }
+            guard self.isConfigured, !self.isExternalARActiveFlag else { return }
 
             if !self.session.isRunning {
                 self.session.startRunning()
@@ -331,7 +342,20 @@ final class CameraService: NSObject, ObservableObject {
                     Task { @MainActor [weak self] in self?.isCapturing = false }
                     return
                 }
-                let ciImage = CIImage(cvPixelBuffer: currentBuffer).oriented(.right)
+                var ciImage = CIImage(cvPixelBuffer: currentBuffer).oriented(.right)
+                let activeZoom = max(self.currentZoomFactorStorage, 1.0)
+                if activeZoom > 1.01 {
+                    let extent = ciImage.extent
+                    let cropW = extent.width / activeZoom
+                    let cropH = extent.height / activeZoom
+                    let cropRect = CGRect(
+                        x: extent.midX - cropW * 0.5,
+                        y: extent.midY - cropH * 0.5,
+                        width: cropW,
+                        height: cropH
+                    )
+                    ciImage = ciImage.cropped(to: cropRect)
+                }
                 guard let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) else {
                     Task { @MainActor [weak self] in self?.isCapturing = false }
                     return
@@ -469,12 +493,23 @@ final class CameraService: NSObject, ObservableObject {
     ///   - animated: xoay mượt hay nhảy thẳng. `false` khi app tự chọn zoom theo
     ///     tư thế — nhảy thẳng nhanh và không gây giật.
     func setZoom(_ factor: CGFloat, animated: Bool = false) {
-        sessionQueue.async { [weak self] in
-            guard let self, let device = self.captureDevice else { return }
+        let clampedTarget = min(max(factor, 1.0), 3.0)
+        currentZoomFactorStorage = clampedTarget
+        if animated {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                zoomFactor = clampedTarget
+            }
+        } else {
+            zoomFactor = clampedTarget
+        }
 
-            let clamped = max(factor, 1)
-            let upper = min(device.activeFormat.videoMaxZoomFactor, 10)
-            let target = min(clamped, upper)
+        guard !isExternalARActive else { return }
+
+        sessionQueue.async { [weak self] in
+            guard let self, !self.isExternalARActiveFlag, let device = self.captureDevice else { return }
+
+            let upper = min(device.activeFormat.videoMaxZoomFactor, 3.0)
+            let target = min(clampedTarget, upper)
 
             do {
                 try device.lockForConfiguration()
@@ -495,8 +530,6 @@ final class CameraService: NSObject, ObservableObject {
                 if device.isSmoothAutoFocusSupported {
                     device.isSmoothAutoFocusEnabled = true
                 }
-
-                Task { @MainActor in self.zoomFactor = target }
             } catch {
                 self.reportSetupError("Không zoom được: \(error.localizedDescription)")
             }

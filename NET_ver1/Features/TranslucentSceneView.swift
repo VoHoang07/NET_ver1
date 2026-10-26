@@ -566,6 +566,7 @@ struct TranslucentSceneView<Content: View>: View {
     @ViewBuilder var overlay: Content
 
     var body: some View {
+        let isRealAROnBackCamera = GuideCamera.supportsRealSpaceAR && (cameraService?.position ?? .back) == .back
         TranslucentARViewRepresentable(
             pose: pose,
             metrics: metrics,
@@ -579,6 +580,8 @@ struct TranslucentSceneView<Content: View>: View {
             isTemplateVisible: isTemplateVisible,
             isAppActive: isAppActive
         )
+        .scaleEffect(isRealAROnBackCamera ? max(zoomFactor, 1.0) : 1.0)
+        .clipped()
         .allowsHitTesting(false)
         .overlay(overlay.opacity(isTemplateVisible ? 1 : 0))
     }
@@ -690,9 +693,6 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
             config.planeDetection = [.horizontal]
             config.environmentTexturing = .automatic
             config.isLightEstimationEnabled = true
-            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-                config.sceneReconstruction = .meshWithClassification
-            }
             view.session.run(config, options: [.resetTracking, .removeExistingAnchors])
             #endif
         }
@@ -742,9 +742,6 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
                 config.planeDetection = [.horizontal]
                 config.environmentTexturing = .automatic
                 config.isLightEstimationEnabled = true
-                if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-                    config.sceneReconstruction = .meshWithClassification
-                }
                 view.session.run(config)
             }
             #endif
@@ -1070,8 +1067,18 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
                 }
             } else {
                 // Trường hợp 2: Người dùng chạm trực tiếp vào một vị trí trên sàn nhà trong khung ngắm
+                // Quy đổi ngược từ toạ độ màn hình đang zoom về toạ độ gốc của ARView
                 isUserPinned = true
-                if let hit = performHorizontalRaycast(in: view, at: point, allowEstimated: true),
+                let effectiveZoom = max(currentZoomFactor, 1.0)
+                let center = CGPoint(
+                    x: view.bounds.width > 0 ? view.bounds.width * 0.5 : 195,
+                    y: view.bounds.height > 0 ? view.bounds.height * 0.5 : 422
+                )
+                let unscaledPoint = CGPoint(
+                    x: center.x + (point.x - center.x) / effectiveZoom,
+                    y: center.y + (point.y - center.y) / effectiveZoom
+                )
+                if let hit = performHorizontalRaycast(in: view, at: unscaledPoint, allowEstimated: true),
                    GuideCamera.shouldAcceptFloorRaycastHit(
                        hitPosition: hit.position,
                        cameraTransform: camTransform,
@@ -1088,7 +1095,7 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
                     return
                 }
 
-                if let ray = view.ray(through: point), ray.direction.y < -0.03 {
+                if let ray = view.ray(through: unscaledPoint), ray.direction.y < -0.03 {
                     let t = (currentFloorY - ray.origin.y) / ray.direction.y
                     if t >= 1.20 && t <= 5.50 {
                         let hitPos = ray.origin + ray.direction * t

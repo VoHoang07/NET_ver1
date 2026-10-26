@@ -971,6 +971,24 @@ final class FigureAssetTests: XCTestCase {
         )
     }
 
+    func testCameraServiceSetZoomUpdatesImmediatelyInARAndNonARModes() {
+        let service = CameraService()
+        service.setExternalARActive(true)
+
+        service.setZoom(1.5, animated: false)
+        XCTAssertEqual(service.zoomFactor, 1.5, accuracy: 0.001)
+
+        service.setZoom(2.0, animated: true)
+        XCTAssertEqual(service.zoomFactor, 2.0, accuracy: 0.001)
+
+        // Kẹp trong dải 1.0x ... 3.0x
+        service.setZoom(0.4, animated: false)
+        XCTAssertEqual(service.zoomFactor, 1.0, accuracy: 0.001)
+
+        service.setZoom(9.0, animated: false)
+        XCTAssertEqual(service.zoomFactor, 3.0, accuracy: 0.001)
+    }
+
     // MARK: - Hỗ trợ
 
     private func load(_ pose: ShootingPose) -> Entity? {

@@ -682,6 +682,34 @@ Tài liệu này lưu trữ toàn bộ các lỗi (bugs), sự cố kỹ thuật
 
 ---
 
+### BUG-035: Nút Shutter bị dịch chuyển ngang khi đổi Tone màu, Zoom không hoạt động ở chế độ AR thực tế, và ứng dụng bị khựng nhẹ ở lần chạm đầu tiên sau khi mở app
+- **Phân loại**: UI / Camera / ARKit / Concurrency
+- **Mức độ**: Cao
+- **Thông báo lỗi gốc (Original Error / Assertion)**:
+  ```text
+  UI Layout / Hardware Contention / Zoom State Defect:
+  1. bottomControls HStack shifts center Shutter button horizontally when Mood.title width changes.
+  2. CameraService.setZoom(_:animated:) returns early when captureDevice == nil (isExternalARActive == true), leaving zoomFactor stuck at 1.0.
+  3. Startup race between AVCaptureSession.startRunning() on sessionQueue and ARSession.run() on Main Thread + lazy CoreHaptics/Vision initialization causes a brief freeze on first user tap.
+  ```
+- **Triệu chứng**:
+  1. Khi đổi qua lại các Tone màu có độ dài chữ khác nhau (`Ấm áp`, `Thước phim`, `Trong trẻo`), nút chụp ảnh (Shutter) ở giữa bị đẩy lệch sang phải/trái.
+  2. Tính năng Zoom (`1x`, `1.5x`, `2x`, `3x` hoặc chụm 2 ngón tay) không phản hồi khi đang ở chế độ AR thực tế trên iPhone.
+  3. Tính năng `Góc đẹp` phải nhấn giữ mới hiện bảng tuỳ chỉnh thay vì chỉ cần ấn vào.
+  4. Khi mới mở ứng dụng và bấm vào bất kỳ tính năng nào lần đầu tiên, ứng dụng bị khựng khoảng 1 giây rồi mới bình thường trở lại.
+- **Nguyên nhân gốc rễ**:
+  1. `bottomControls` dùng `HStack` 3 phần tử đồng cấp và nút Tone màu dùng `.fixedSize(horizontal: true)`, làm thay đổi chiều rộng vế trái khi đổi tên màu và đẩy nút Shutter lệch khỏi tâm màn hình.
+  2. `CameraService.setZoom(_:animated:)` chỉ cập nhật `zoomFactor` bên trong `sessionQueue.async` sau khi kiểm tra `guard let device = self.captureDevice else { return }`. Ở chế độ AR (`isExternalARActive == true`), `captureDevice` bằng `nil` nên `zoomFactor` không bao giờ đổi.
+  3. Lúc mới mở app, `CameraService.start()` trên `sessionQueue` vẫn có thể gọi `configureSession` + `session.startRunning()` tranh chấp phần cứng camera với `ARSession.run()`, kết hợp với `ARWorldTrackingConfiguration.sceneReconstruction = .meshWithClassification`, `analysisQueue` ở mức `.userInitiated` chạy Vision ngay frame thứ 6, và `UISelectionFeedbackGenerator` khởi tạo trễ (lazy) ngay ở cú chạm đầu tiên trên Main Thread.
+- **Giải pháp**:
+  1. Chuyển `bottomControls` sang `ZStack` khoá cứng nút Shutter ở chính giữa màn hình (`X = 50%`) và cố định chiều rộng nút Tone màu (`width: 96pt`).
+  2. Đổi nút `Góc đẹp` sang thao tác chạm trực tiếp (`Button`) để mở ngay bảng `smartAssistDrawer` (tích hợp chỉnh chiều cao mẫu `155–180cm`, thanh trượt Zoom `1.0x–3.0x`, công tắc `Tự chụp AI`, và nút `Quét góc đẹp`).
+  3. Trong `CameraService.setZoom(_:animated:)`, cập nhật `zoomFactor` ngay lập tức trên `@MainActor` (kẹp trong `1.0...3.0`), đồng thời áp dụng `.scaleEffect` đồng bộ cho khung ngắm AR + quy đổi ngược toạ độ chạm sàn và cắt (crop) ảnh chụp từ `ARFrame` đúng theo `zoomFactor`.
+  4. Ngăn hoàn toàn `AVCaptureSession` khởi chạy khi `ARSession` đang giữ camera sau (`isExternalARActiveFlag`), hạ `analysisQueue` xuống `.utility` kèm `warmupFramesRemaining = 18`, bỏ `.meshWithClassification` không cần thiết, và làm nóng trước (`prepare()`) bộ rung Haptics + 6 tư thế USDZ (`warmUpPosesGradually()`).
+- **Phòng ngừa & Test**: `FigureAssetTests.testCameraServiceSetZoomUpdatesImmediatelyInARAndNonARModes`.
+
+---
+
 ## Biểu Mẫu Nhập Liệu Chuẩn Khi Gặp Bug Mới (Template)
 
 Mỗi khi phát sinh lỗi mới, copy mẫu sau và thêm vào danh sách:

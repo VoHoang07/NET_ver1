@@ -173,7 +173,14 @@ struct CameraView: View {
         .sheet(isPresented: $showAbout) {
             AboutView()
         }
-        .task { camera.requestAccessAndStart() }
+        .task {
+            camera.requestAccessAndStart()
+            // Khởi tạo sẵn kết nối Haptics và nạp dần 6 tư thế USDZ ở nhịp nghỉ để lần bấm đầu tiên không bao giờ bị khựng
+            try? await Task.sleep(for: .milliseconds(120))
+            Self.selectionFeedback.prepare()
+            Self.shutterFeedback.prepare()
+            await FigureAssetLoader.warmUpPosesGradually()
+        }
         .onDisappear { camera.stop() }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
@@ -412,23 +419,32 @@ struct CameraView: View {
             }
     }
 
-    // MARK: - Focal Length Dial (1x · 1.5x · 2x chuẩn Halide / iPhone Pro Camera)
+    // MARK: - Focal Length Dial (1x · 1.5x · 2x · 3x chuẩn Halide / iPhone Pro Camera, hỗ trợ cả chạm và vuốt ngang)
 
     private var focalLengthDial: some View {
         let presets: [(label: String, factor: CGFloat)] = [
             ("1x", 1.0),
             ("1.5x", 1.5),
-            ("2x", 2.0)
+            ("2x", 2.0),
+            ("3x", 3.0)
         ]
         return HStack(spacing: 3) {
             ForEach(presets, id: \.label) { preset in
                 let isSelected = abs(camera.zoomFactor - preset.factor) < 0.22
+                let displayLabel: String = {
+                    if isSelected && abs(camera.zoomFactor - preset.factor) >= 0.05 {
+                        return String(format: "%.1fx", camera.zoomFactor)
+                    }
+                    return preset.label
+                }()
                 Button {
                     triggerSelectionHaptic()
+                    pinchBaseZoom = preset.factor
                     camera.setZoom(preset.factor, animated: true)
                 } label: {
-                    Text(preset.label)
+                    Text(displayLabel)
                         .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                        .monospacedDigit()
                         .foregroundStyle(isSelected ? .black : .white.opacity(0.85))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
@@ -713,7 +729,33 @@ struct CameraView: View {
                 }
             }
 
-            // 2. Nút bật/tắt Tự chụp khi khớp dáng + Quét lại góc đẹp
+            // 2. Thanh trượt Zoom mượt (1.0x - 3.0x)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Tiêu cự ống kính (Zoom)")
+                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                    Spacer()
+                    Text(String(format: "%.1fx", camera.zoomFactor))
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                }
+                Slider(
+                    value: Binding(
+                        get: { camera.zoomFactor },
+                        set: { newValue in
+                            pinchBaseZoom = newValue
+                            camera.setZoom(newValue, animated: false)
+                        }
+                    ),
+                    in: 1.0...3.0,
+                    step: 0.05
+                )
+                .tint(Color.netGreen)
+            }
+
+            // 3. Nút bật/tắt Tự chụp khi khớp dáng + Quét lại góc đẹp
             HStack(spacing: 8) {
                 Button {
                     triggerSelectionHaptic()
@@ -748,10 +790,16 @@ struct CameraView: View {
 
                 Button {
                     triggerShutterHaptic()
-                    if let layout {
-                        camera.setZoom(layout.suggestedZoom, animated: true)
+                    if mode.usesBodyTemplate {
+                        if let layout {
+                            pinchBaseZoom = layout.suggestedZoom
+                            camera.setZoom(layout.suggestedZoom, animated: true)
+                        }
+                        camera.requestFloorAnchor(at: .zero)
+                    } else {
+                        pinchBaseZoom = 1.0
+                        camera.setZoom(1.0, animated: true)
                     }
-                    camera.requestFloorAnchor(at: .zero)
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                         activeDrawer = nil
                     }
@@ -759,7 +807,7 @@ struct CameraView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "scope")
                             .font(.system(size: 13, weight: .semibold))
-                        Text("Quét lại góc đẹp")
+                        Text("Quét góc đẹp")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                     }
                     .foregroundStyle(.black)
@@ -930,8 +978,12 @@ struct CameraView: View {
                 endPoint: .bottom
             )
 
-            CameraPreview(camera: camera)
-                .ignoresSafeArea()
+            if !(GuideCamera.supportsRealSpaceAR && camera.position == .back && mode.usesBodyTemplate) {
+                CameraPreview(camera: camera)
+                    .scaleEffect(max(camera.zoomFactor, 1.0))
+                    .clipped()
+                    .ignoresSafeArea()
+            }
 
             templateOverlay
                 .ignoresSafeArea()
@@ -989,7 +1041,7 @@ struct CameraView: View {
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { scale in
-                    let target = min(max(pinchBaseZoom * scale, 1.0), 4.0)
+                    let target = min(max(pinchBaseZoom * scale, 1.0), 3.0)
                     camera.setZoom(target, animated: false)
                 }
                 .onEnded { _ in
@@ -1073,111 +1125,141 @@ struct CameraView: View {
         )
     }
 
-    // MARK: - Bottom Control Bar (Tinh gọn: Bộ sưu tập | Màu phim (Giữ im mở bảng) | Shutter | Góc đẹp (Giữ im mở cài đặt 3D))
+    // MARK: - Bottom Control Bar (Nút Shutter khoá cứng chính giữa 100%, không bao giờ xê dịch khi đổi Tone màu; Góc đẹp chạm 1 lần để tuỳ chỉnh)
 
     private var bottomControls: some View {
-        HStack(alignment: .center) {
-            // Cụm bên trái: Nút Bộ sưu tập & Nút Tone màu (Chạm đổi nhanh, Giữ im mở Bảng 5 Tone Màu)
-            HStack(spacing: 10) {
-                Button {
-                    triggerSelectionHaptic()
-                    activeDrawer = nil
-                    showGallery = true
-                } label: {
-                    ZStack {
-                        if let captured = camera.lastCapture {
-                            Image(uiImage: captured.image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 44, height: 44)
-                                .clipShape(Circle())
-                        } else {
-                            Circle()
-                                .fill(Color.black.opacity(0.42))
-                                .frame(width: 44, height: 44)
-                                .overlay {
-                                    Image(systemName: "photo.on.rectangle.angled")
-                                        .font(.system(size: 16, weight: .medium))
-                                        .foregroundStyle(.white.opacity(0.88))
-                                }
-                        }
-                    }
-                    .overlay {
-                        Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.8)
-                    }
-                }
-                .buttonStyle(.plain)
-
-                // Nút Tone Màu Phim (Mood): Chạm để đổi nhanh, Giữ im (hoặc bấm mũi tên) để mở Bảng 5 Tone Màu
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(mood.swatchGradient)
-                        .frame(width: 14, height: 14)
-                        .overlay {
-                            Circle().strokeBorder(Color.white.opacity(0.65), lineWidth: 0.8)
-                        }
-
-                    Text(mood.title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-
-                    Image(systemName: activeDrawer == .moodPalette ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.65))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            triggerShutterHaptic()
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
-                                activeDrawer = (activeDrawer == .moodPalette) ? nil : .moodPalette
+        ZStack {
+            // 1. Cụm hai bên (Trái: Bộ sưu tập + Tone màu | Phải: Góc đẹp)
+            HStack(alignment: .center, spacing: 0) {
+                HStack(spacing: 8) {
+                    Button {
+                        triggerSelectionHaptic()
+                        activeDrawer = nil
+                        showGallery = true
+                    } label: {
+                        ZStack {
+                            if let captured = camera.lastCapture {
+                                Image(uiImage: captured.image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 42, height: 42)
+                                    .clipShape(Circle())
+                            } else {
+                                Circle()
+                                    .fill(Color.black.opacity(0.42))
+                                    .frame(width: 42, height: 42)
+                                    .overlay {
+                                        Image(systemName: "photo.on.rectangle.angled")
+                                            .font(.system(size: 15.5, weight: .medium))
+                                            .foregroundStyle(.white.opacity(0.88))
+                                    }
                             }
                         }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(.white.opacity(0.94))
-                .padding(.horizontal, 11)
-                .padding(.vertical, 10)
-                .background(
-                    activeDrawer == .moodPalette ? Color.white.opacity(0.18) : Color.black.opacity(0.42),
-                    in: Capsule()
-                )
-                .overlay {
-                    Capsule().strokeBorder(
-                        activeDrawer == .moodPalette ? mood.accentColor.opacity(0.75) : Color.white.opacity(0.18),
-                        lineWidth: 0.8
-                    )
-                }
-                .scaleEffect(isMoodLongPressing ? 0.92 : 1.0)
-                .contentShape(Capsule())
-                .onTapGesture {
-                    triggerSelectionHaptic()
-                    if activeDrawer == .moodPalette {
-                        withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
-                            activeDrawer = nil
+                        .overlay {
+                            Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 0.8)
                         }
-                    } else {
-                        let all = Mood.allCases
-                        if let idx = all.firstIndex(of: mood) {
-                            withAnimation(.easeInOut(duration: 0.18)) {
+                    }
+                    .buttonStyle(.plain)
+
+                    // Nút Tone Màu Phim: Chiều rộng cố định (94pt) để không bao giờ giãn/co hay đẩy nút Shutter
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(mood.swatchGradient)
+                            .frame(width: 13, height: 13)
+                            .overlay {
+                                Circle().strokeBorder(Color.white.opacity(0.65), lineWidth: 0.8)
+                            }
+
+                        Text(mood.title)
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: activeDrawer == .moodPalette ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    .foregroundStyle(.white.opacity(0.94))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                    .frame(width: 96)
+                    .background(
+                        activeDrawer == .moodPalette ? Color.white.opacity(0.18) : Color.black.opacity(0.42),
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule().strokeBorder(
+                            activeDrawer == .moodPalette ? mood.accentColor.opacity(0.75) : Color.white.opacity(0.18),
+                            lineWidth: 0.8
+                        )
+                    }
+                    .scaleEffect(isMoodLongPressing ? 0.94 : 1.0)
+                    .contentShape(Capsule())
+                    .onTapGesture {
+                        triggerSelectionHaptic()
+                        if activeDrawer == .moodPalette {
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                                activeDrawer = nil
+                            }
+                        } else {
+                            let all = Mood.allCases
+                            if let idx = all.firstIndex(of: mood) {
                                 mood = all[(idx + 1) % all.count]
                             }
                         }
                     }
-                }
-                .onLongPressGesture(minimumDuration: 0.18, pressing: { pressing in
-                    withAnimation(.easeInOut(duration: 0.12)) {
-                        isMoodLongPressing = pressing
+                    .onLongPressGesture(minimumDuration: 0.18, pressing: { pressing in
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            isMoodLongPressing = pressing
+                        }
+                    }) {
+                        triggerShutterHaptic()
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
+                            activeDrawer = (activeDrawer == .moodPalette) ? nil : .moodPalette
+                        }
                     }
-                }) {
-                    triggerShutterHaptic()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
-                        activeDrawer = (activeDrawer == .moodPalette) ? nil : .moodPalette
-                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Nút Shutter đôi chuẩn Pro Camera
+                Spacer(minLength: 88)
+
+                // Cụm bên phải: Chỉ cần chạm (ấn vô) "Góc đẹp" là mở ngay bảng tuỳ chỉnh Góc đẹp & Mẫu 3D!
+                Button {
+                    triggerSelectionHaptic()
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                        activeDrawer = (activeDrawer == .smartAssist) ? nil : .smartAssist
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: match.isAligned ? "checkmark.circle.fill" : "sparkles")
+                            .font(.system(size: 13.5, weight: .semibold))
+                        Text(match.isAligned ? "Đã khớp" : "Góc đẹp")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        Image(systemName: activeDrawer == .smartAssist ? "chevron.down" : "slider.horizontal.3")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    .foregroundStyle(match.isAligned ? Color.netGreen : .white.opacity(0.94))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        activeDrawer == .smartAssist ? Color.white.opacity(0.18) : Color.black.opacity(0.42),
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule().strokeBorder(
+                            match.isAligned
+                                ? Color.netGreen.opacity(0.6)
+                                : (activeDrawer == .smartAssist ? Color.white.opacity(0.45) : Color.white.opacity(0.18)),
+                            lineWidth: 0.8
+                        )
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            // 2. Nút Shutter đôi chuẩn Pro Camera: Neo cứng ở tâm ZStack (X = 50%), tuyệt đối không dịch chuyển!
             Button {
                 triggerShutterHaptic()
                 activeDrawer = nil
@@ -1208,69 +1290,6 @@ struct CameraView: View {
             }
             .buttonStyle(.plain)
             .disabled(!shutterIsActive)
-
-            // Cụm bên phải: Chạm để tự quét góc đứng đẹp nhất, Giữ im để mở Tuỳ chỉnh Chiều cao 3D & Tự chụp AI
-            HStack {
-                Spacer()
-                HStack(spacing: 5) {
-                    Image(systemName: match.isAligned ? "checkmark.circle.fill" : "sparkles")
-                        .font(.system(size: 13.5, weight: .semibold))
-                    Text(match.isAligned ? "Đã khớp" : "Góc đẹp")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                    Image(systemName: activeDrawer == .smartAssist ? "chevron.down" : "slider.horizontal.3")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(match.isAligned ? Color.netGreen : .white.opacity(0.94))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    activeDrawer == .smartAssist ? Color.white.opacity(0.18) : Color.black.opacity(0.42),
-                    in: Capsule()
-                )
-                .overlay {
-                    Capsule().strokeBorder(
-                        match.isAligned
-                            ? Color.netGreen.opacity(0.6)
-                            : (activeDrawer == .smartAssist ? Color.white.opacity(0.45) : Color.white.opacity(0.18)),
-                        lineWidth: 0.8
-                    )
-                }
-                .scaleEffect(isSmartSpotLongPressing ? 0.92 : 1.0)
-                .contentShape(Capsule())
-                .onTapGesture {
-                    triggerSelectionHaptic()
-                    if activeDrawer == .smartAssist {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            activeDrawer = nil
-                        }
-                        return
-                    }
-                    if mode.usesBodyTemplate {
-                        if let layout {
-                            camera.setZoom(layout.suggestedZoom, animated: true)
-                        }
-                        camera.requestFloorAnchor(at: .zero)
-                    } else {
-                        camera.setZoom(1.0, animated: true)
-                        let center = CGPoint(x: max(viewportSize.width, 390) * 0.5, y: max(viewportSize.height, 844) * 0.5)
-                        camera.focus(atLayerPoint: center)
-                    }
-                }
-                .onLongPressGesture(minimumDuration: 0.18, pressing: { pressing in
-                    withAnimation(.easeInOut(duration: 0.12)) {
-                        isSmartSpotLongPressing = pressing
-                    }
-                }) {
-                    triggerShutterHaptic()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
-                        activeDrawer = (activeDrawer == .smartAssist) ? nil : .smartAssist
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 

@@ -55,6 +55,29 @@ enum FigureAssetLoader {
         prototypeCache.removeAll()
     }
 
+    /// Nạp đồng bộ 1 tư thế vào `prototypeCache` (tách hàm non-async để tránh cảnh báo Swift 6).
+    @MainActor
+    private static func preloadPoseIfNeeded(_ pose: ShootingPose, bundle: Bundle) {
+        guard let url = bundle.url(
+            forResource: resourceName(for: pose.id),
+            withExtension: "usdz"
+        ) else { return }
+        if prototypeCache[url] == nil, let prototype = try? Entity.load(contentsOf: url) {
+            prototypeCache[url] = prototype
+        }
+    }
+
+    /// Nạp trước dần dần cả 6 tư thế vào `prototypeCache` ở các nhịp nghỉ sau khi mở app,
+    /// giúp thao tác bấm chuyển tư thế lần đầu phản hồi tức thì mà không làm nghẽn lúc khởi động.
+    @MainActor
+    static func warmUpPosesGradually(bundle: Bundle = .main) async {
+        try? await Task.sleep(for: .milliseconds(450))
+        for pose in ShootingPose.all {
+            preloadPoseIfNeeded(pose, bundle: bundle)
+            try? await Task.sleep(for: .milliseconds(70))
+        }
+    }
+
     /// Tải người ở đúng tạo dáng, chuẩn hoá tỉ lệ theo chiều cao người mẫu.
     ///
     /// - Returns: `nil` khi không có file hoặc load lỗi — khi đó dùng hình khối.
