@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NET_ver1 AI Interview Coach | Nền tảng Phỏng vấn Kỹ thuật Chuyên sâu</title>
+  <meta name="description" content="Luyện tập phỏng vấn kỹ thuật dựa trên source code thực tế của dự án NET_ver1. Hệ thống câu hỏi về Bug, Kiến trúc, và Tình huống thực tế kèm AI chấm điểm thông minh.">
+  
+  <!-- Google Fonts: Outfit & Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header" id="app-header">
+    <div class="header-left">
+      <div class="brand-badge">
+        <span class="brand-dot"></span>
+        <span class="brand-version">NET_ver1</span>
+      </div>
+      <div class="brand-title-group">
+        <h1 class="brand-title">AI Interview Coach</h1>
+        <p class="brand-subtitle">Luyện phỏng vấn chuyên sâu trên Source Code & Nhật ký Lỗi</p>
+      </div>
+    </div>
+
+    <!-- Header Stats -->
+    <div class="header-stats" id="header-stats">
+      <div class="stat-item" id="stat-total-card">
+        <span class="stat-label">Tổng câu hỏi</span>
+        <span class="stat-value" id="stat-total-count">0</span>
+      </div>
+      <div class="stat-item" id="stat-completed-card">
+        <span class="stat-label">Đã hoàn thành</span>
+        <span class="stat-value highlight" id="stat-completed-count">0</span>
+      </div>
+      <div class="stat-item" id="stat-avg-card">
+        <span class="stat-label">Điểm trung bình</span>
+        <span class="stat-value score" id="stat-avg-score">--</span>
+      </div>
+    </div>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <div class="sync-badge" id="sync-status-badge" title="Toàn bộ câu hỏi được tự động quét và sinh từ docs/BUG-LOG.md và source code">
+        <span class="sync-dot"></span>
+        <span>Auto-Synced với Code & Bug-Log</span>
+      </div>
+
+      <button class="btn btn-secondary" id="btn-random-header" title="Chọn ngẫu nhiên một câu hỏi để luyện">
+        <span class="icon-text">🎲</span>
+        <span>Câu ngẫu nhiên</span>
+      </button>
+
+      <button class="btn btn-primary" id="btn-settings-modal" title="Cài đặt AI & API Key">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span>Cài đặt AI</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 3 Question Types Overview Strip -->
+  <section class="type-overview-strip" id="type-overview-strip">
+    <div class="type-card type-real" data-category="Thực tế" id="type-card-real" title="Nhấn để lọc riêng dạng câu hỏi Thực tế">
+      <div class="type-card-icon">📱</div>
+      <div class="type-card-info">
+        <div class="type-card-top">
+          <span class="type-card-label">Dạng 1 • Thực tế</span>
+          <span class="type-card-count" id="type-count-real">0/8 đã làm</span>
+        </div>
+        <p class="type-card-desc">Tình huống chụp thực tế, bài toán không gian, ánh sáng & UX sản phẩm</p>
+      </div>
+    </div>
+
+    <div class="type-card type-arch" data-category="Kiến trúc và hàm cốt lõi" id="type-card-arch" title="Nhấn để lọc riêng dạng câu hỏi Kiến trúc và hàm cốt lõi">
+      <div class="type-card-icon">🏛️</div>
+      <div class="type-card-info">
+        <div class="type-card-top">
+          <span class="type-card-label">Dạng 2 • Kiến trúc và hàm cốt lõi</span>
+          <span class="type-card-count" id="type-count-arch">0/9 đã làm</span>
+        </div>
+        <p class="type-card-desc">Clean Architecture 3 tầng, Concurrency & giải thích sâu các hàm cốt lõi</p>
+      </div>
+    </div>
+
+    <div class="type-card type-bug" data-category="Bug" id="type-card-bug" title="Nhấn để lọc riêng dạng câu hỏi Bug">
+      <div class="type-card-icon">🐛</div>
+      <div class="type-card-info">
+        <div class="type-card-top">
+          <span class="type-card-label">Dạng 3 • Bug</span>
+          <span class="type-card-count" id="type-count-bug">0/20 đã làm</span>
+        </div>
+        <p class="type-card-desc">Chẩn đoán nguyên nhân gốc rễ, sửa code & viết Unit Test từ BUG-LOG.md</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filter & Control Bar -->
+  <section class="filter-bar" id="filter-bar">
+    <div class="search-box">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="text" id="input-search" placeholder="Tìm theo từ khoá, bug ID, tên hàm, RealityKit, USDZ...">
+    </div>
+
+    <!-- Categories Tabs (3 Dạng rõ ràng) -->
+    <div class="category-tabs" id="category-tabs">
+      <button class="cat-pill active" data-category="ALL" id="cat-all">Tất cả</button>
+      <button class="cat-pill cat-pill-real" data-category="Thực tế" id="cat-real">
+        <span class="cat-icon">📱</span> Thực tế
+      </button>
+      <button class="cat-pill cat-pill-arch" data-category="Kiến trúc và hàm cốt lõi" id="cat-code">
+        <span class="cat-icon">🏛️</span> Kiến trúc và hàm cốt lõi
+      </button>
+      <button class="cat-pill cat-pill-bug" data-category="Bug" id="cat-bug">
+        <span class="cat-icon">🐛</span> Bug
+      </button>
+    </div>
+
+    <!-- Difficulty Filter -->
+    <div class="difficulty-select-wrap">
+      <select id="select-difficulty" class="custom-select">
+        <option value="ALL">Mọi độ khó</option>
+        <option value="Junior">Junior</option>
+        <option value="Mid">Mid-Level</option>
+        <option value="Senior">Senior</option>
+        <option value="Lead">Staff / Lead</option>
+      </select>
+    </div>
+
+    <!-- Unanswered Toggle -->
+    <div class="unanswered-wrap">
+      <label class="custom-checkbox-label">
+        <input type="checkbox" id="check-unanswered">
+        <span>Chưa trả lời</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- Main Grid Workspace -->
+  <main class="main-container" id="main-container">
+    <!-- Left Pane: Questions List -->
+    <aside class="sidebar-pane" id="sidebar-pane">
+      <div class="pane-header">
+        <h2 class="pane-title">Danh sách Câu hỏi (3 Dạng)</h2>
+        <span class="badge badge-neutral" id="visible-count-badge">37 câu</span>
+      </div>
+      <div class="questions-list" id="questions-list">
+        <!-- Rendered dynamically by app.js grouped by 3 categories -->
+      </div>
+    </aside>
+
+    <!-- Right Pane: Active Question & Interactive Arena -->
+    <section class="arena-pane" id="arena-pane">
+      <!-- Empty State when no question selected -->
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon-wrap">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <h3 class="empty-title">Chọn một câu hỏi từ danh sách bên trái</h3>
+        <p class="empty-text">Hệ thống được phân chia rõ thành 3 dạng câu hỏi: <strong>Thực tế</strong>, <strong>Kiến trúc và hàm cốt lõi</strong>, và <strong>Bug</strong> trong dự án NET_ver1.</p>
+        <button class="btn btn-primary" id="btn-pick-random">Bắt đầu ngẫu nhiên</button>
+      </div>
+
+      <!-- Question Arena Details (Hidden until selected) -->
+      <div class="arena-content hidden" id="arena-content">
+        <!-- Question Header Card -->
+        <div class="card question-card" id="question-card">
+          <div class="question-meta-bar">
+            <span class="badge badge-id" id="arena-qid">Q-REAL-001</span>
+            <span class="badge badge-category" id="arena-category">Thực tế</span>
+            <span class="badge badge-subcategory" id="arena-subcategory">Không gian chụp</span>
+            <span class="badge badge-difficulty" id="arena-difficulty">Senior</span>
+            <div class="related-files-wrap" id="arena-files-wrap">
+              <!-- Files badges rendered here -->
+            </div>
+          </div>
+
+          <h2 class="question-title" id="arena-title">Tiêu đề câu hỏi</h2>
+          <div class="question-description" id="arena-description">
+            <!-- Question text rendered here -->
+          </div>
+
+          <!-- Code Snippet Container -->
+          <div class="code-box-container" id="arena-code-container">
+            <div class="code-box-header">
+              <span class="code-box-label">Mã nguồn / Log trích dẫn từ dự án:</span>
+              <button class="btn-copy-code" id="btn-copy-code" title="Sao chép đoạn code">
+                <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre class="code-block"><code id="arena-code-snippet"></code></pre>
+          </div>
+
+          <!-- Hints Accordion -->
+          <div class="hints-accordion" id="hints-accordion">
+            <button class="hints-toggle" id="btn-toggle-hints">
+              <span class="hint-icon">💡</span>
+              <span>Gợi ý tư duy trả lời (Nhấn để xem)</span>
+              <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div class="hints-body hidden" id="hints-body">
+              <ul id="hints-list"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Answer Workspace Card -->
+        <div class="card answer-card" id="answer-card">
+          <div class="answer-card-header">
+            <div class="answer-title-group">
+              <h3 class="answer-title">Câu trả lời của bạn</h3>
+              <span class="answer-hint" id="arena-answer-hint">Phân tích rõ: 1. Bản chất thực tế | 2. Giải pháp kỹ thuật | 3. Đánh đổi & Phòng ngừa</span>
+            </div>
+            <div class="char-counter" id="char-counter">0 từ • 0 ký tự</div>
+          </div>
+
+          <div class="editor-toolbar">
+            <button class="toolbar-btn" id="btn-template-snippet" data-snippet="1. **Nguyên nhân gốc rễ**:\n- \n\n2. **Giải pháp kỹ thuật**:\n- \n\n3. **Biện pháp phòng ngừa & Test**:\n- " title="Chèn khung trả lời chuẩn theo dạng câu hỏi">
+              📝 Khung chuẩn theo dạng
+            </button>
+            <button class="toolbar-btn" data-snippet="`code`" title="Chèn code inline">Code</button>
+            <button class="toolbar-btn" data-snippet="**In đậm**" title="In đậm">B</button>
+            <button class="toolbar-btn" data-snippet="- Mục 1\n- Mục 2" title="Danh sách">List</button>
+          </div>
+
+          <textarea id="user-answer-textarea" class="user-answer-textarea" rows="8" placeholder="Nhập câu trả lời phỏng vấn của bạn ở đây... Hãy phân tích như bạn đang trả lời trực tiếp với Giám đốc kỹ thuật (Lead/Staff Engineer)..."></textarea>
+
+          <div class="answer-action-bar">
+            <div class="action-left">
+              <button class="btn btn-ghost" id="btn-reset-answer">Làm lại</button>
+              <button class="btn btn-secondary" id="btn-peek-ideal">Xem đáp án chuẩn</button>
+            </div>
+            <div class="action-right">
+              <button class="btn btn-cta" id="btn-submit-answer">
+                <span class="btn-spinner hidden" id="submit-spinner"></span>
+                <span class="btn-text" id="submit-btn-text">
+                  <svg class="icon-small" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                  Nộp bài & AI Chấm điểm
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Evaluation Result Card (Shown after evaluation) -->
+        <div class="card result-card hidden" id="result-card">
+          <div class="result-header">
+            <div class="score-dial-wrap">
+              <div class="score-dial" id="score-dial">
+                <span class="score-number" id="result-score-val">0</span>
+                <span class="score-max">/100</span>
+              </div>
+            </div>
+            <div class="result-summary-group">
+              <div class="result-badge-wrap">
+                <span class="grade-badge" id="result-grade-badge">Xuất sắc</span>
+                <span class="eval-mode-badge" id="result-eval-mode">AI Gemini 2.5 Flash</span>
+              </div>
+              <p class="result-summary-text" id="result-summary-text">Nhận xét tổng quan của AI...</p>
+            </div>
+          </div>
+
+          <!-- Evaluation Tabs / Sections -->
+          <div class="result-sections-grid">
+            <!-- Strengths -->
+            <div class="eval-box box-strengths">
+              <div class="eval-box-header">
+                <span class="eval-box-icon">✅</span>
+                <h4>Điểm bạn đã làm tốt</h4>
+              </div>
+              <ul class="eval-list" id="result-strengths-list"></ul>
+            </div>
+
+            <!-- Missing / Improvements -->
+            <div class="eval-box box-missing">
+              <div class="eval-box-header">
+                <span class="eval-box-icon">⚠️</span>
+                <h4>Điểm thiếu sót & Cần bổ sung</h4>
+              </div>
+              <ul class="eval-list" id="result-missing-list"></ul>
+            </div>
+          </div>
+
+          <!-- Ideal Answer Reference -->
+          <div class="ideal-answer-box" id="result-ideal-box">
+            <div class="ideal-header">
+              <span class="ideal-icon">🎯</span>
+              <h4>Đáp án tham chiếu tối ưu từ dự án</h4>
+            </div>
+            <div class="ideal-content" id="result-ideal-content"></div>
+          </div>
+
+          <!-- Follow-up Question Challenge -->
+          <div class="followup-box" id="result-followup-box">
+            <div class="followup-header">
+              <span class="followup-icon">🔥</span>
+              <h4>Câu hỏi thử thách phỏng vấn đào sâu tiếp theo:</h4>
+            </div>
+            <p class="followup-text" id="result-followup-text"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal 1: AI Settings Modal -->
+  <div class="modal-backdrop hidden" id="settings-modal-backdrop">
+    <div class="modal-box card" id="settings-modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">Cấu hình Động cơ AI (AI Engine Settings)</h3>
+        <button class="btn-close-modal" id="btn-close-settings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="setting-provider">Chế độ chấm điểm:</label>
+          <select id="setting-provider" class="custom-select">
+            <option value="gemini">Google Gemini API (Chấm thông minh trực tuyến)</option>
+            <option value="offline">Bộ tiêu chuẩn Offline (Rubric Engine - Không cần API Key)</option>
+          </select>
+          <p class="form-hint">Chế độ Offline vẫn chấm điểm chính xác dựa trên bộ từ khoá và tiêu chí chuyên môn của dự án.</p>
+        </div>
+
+        <div class="form-group" id="group-gemini-key">
+          <label class="form-label" for="setting-gemini-key">Google Gemini API Key:</label>
+          <div class="input-password-wrap">
+            <input type="password" id="setting-gemini-key" class="text-input" placeholder="AIzaSy...">
+            <button class="btn-toggle-vis" id="btn-toggle-key-vis" type="button">Hiện</button>
+          </div>
+          <p class="form-hint">Khóa API được lưu an toàn trong trình duyệt cục bộ (Local Storage), không gửi về bên thứ ba.</p>
+        </div>
+
+        <div class="form-group" id="group-gemini-model">
+          <label class="form-label" for="setting-gemini-model">Model Gemini:</label>
+          <select id="setting-gemini-model" class="custom-select">
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Khuyên dùng - Nhanh, Sâu sắc)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Phổ thông)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Lập luận phức tạp)</option>
+          </select>
+        </div>
+
+        <div class="api-status-banner" id="api-status-banner">
+          <span id="api-status-text">Đang dùng: Bộ chuẩn Offline (Rubric Engine)</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-settings">Huỷ</button>
+        <button class="btn btn-primary" id="btn-save-settings">Lưu cấu hình</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
