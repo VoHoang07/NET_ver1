@@ -644,6 +644,21 @@ Tài liệu này lưu trữ toàn bộ các lỗi (bugs), sự cố kỹ thuật
 
 ---
 
+### BUG-033: Capture trực tiếp biến cục bộ `CVPixelBuffer` (non-Sendable) vào closure `@Sendable` của `DispatchQueue.async`
+- **Phân loại**: Concurrency / Swift 6 Sendable / Camera
+- **Mức độ**: Trung bình
+- **Thông báo lỗi gốc (Original Error / Assertion)**:
+  ```text
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:188:80 Capture of 'pixelBuffer' with non-Sendable type 'CVPixelBuffer' (aka 'CVBuffer') in a '@Sendable' closure
+  /Users/vohoang/Documents/NET_ver1/NET_ver1/Cores/CameraService.swift:323:54 Capture of 'pixelBuffer' with non-Sendable type 'CVPixelBuffer' (aka 'CVBuffer') in a '@Sendable' closure
+  ```
+- **Triệu chứng**: Trình biên dịch Swift báo cảnh báo/lỗi Concurrency tại dòng 188 (`ingestARPixelBuffer`) và dòng 323 (`capturePhoto(with:)`) trong `CameraService.swift` khi truyền biến cục bộ `pixelBuffer: CVPixelBuffer` qua ranh giới closure `@Sendable` của `analysisQueue.async`.
+- **Nguyên nhân gốc rễ**: Kiểu `CVPixelBuffer` (`CVBuffer`) của CoreVideo chưa conform `Sendable`, nên việc bắt (capture) trực tiếp biến cục bộ `pixelBuffer` vào closure `@Sendable` của `DispatchQueue.async` vi phạm kiểm tra Swift Strict Concurrency.
+- **Giải pháp**: Thay vì capture biến cục bộ `pixelBuffer` vào closure `@Sendable`, đọc trực tiếp thuộc tính `self.latestARPixelBuffer` (`nonisolated(unsafe)`) bên trong khối `analysisQueue.async` của `ingestARPixelBuffer(_:)` và `capturePhoto(with:)`.
+- **Phòng ngừa & Test**: `FigureAssetTests.testCameraServiceARStateMutationDoesNotPublishSynchronouslyDuringViewUpdate` và kiểm tra biên dịch không còn cảnh báo Sendable.
+
+---
+
 ## Biểu Mẫu Nhập Liệu Chuẩn Khi Gặp Bug Mới (Template)
 
 Mỗi khi phát sinh lỗi mới, copy mẫu sau và thêm vào danh sách:

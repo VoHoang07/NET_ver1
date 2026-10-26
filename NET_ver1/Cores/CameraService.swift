@@ -181,15 +181,15 @@ final class CameraService: NSObject, ObservableObject {
         framesSinceLastAnalysis = 0
 
         analysisQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self, let currentBuffer = self.latestARPixelBuffer else { return }
             let configuration = self.analysisConfiguration.current
             let viewport = configuration.viewportSize
             let safeArea: SafeArea? = viewport.width > 0 && viewport.height > 0
-                ? SafeArea(viewSize: viewport, bufferSize: self.bufferSize(of: pixelBuffer), fillsView: true)
+                ? SafeArea(viewSize: viewport, bufferSize: self.bufferSize(of: currentBuffer), fillsView: true)
                 : nil
 
             let analysis = self.frameAnalyzer.analyze(
-                pixelBuffer: pixelBuffer,
+                pixelBuffer: currentBuffer,
                 orientation: configuration.orientation,
                 safeArea: safeArea,
                 wantsBackgroundAnalysis: configuration.needsBackgroundAnalysis
@@ -313,14 +313,17 @@ final class CameraService: NSObject, ObservableObject {
 
     func capturePhoto(with mood: Mood) {
         if isExternalARActive {
-            guard let pixelBuffer = latestARPixelBuffer else {
+            guard latestARPixelBuffer != nil else {
                 reportSetupError("Camera AR đang khởi tạo. Hãy thử lại ngay.")
                 return
             }
             isCapturing = true
             analysisQueue.async { [weak self] in
-                guard let self else { return }
-                let ciImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
+                guard let self, let currentBuffer = self.latestARPixelBuffer else {
+                    Task { @MainActor [weak self] in self?.isCapturing = false }
+                    return
+                }
+                let ciImage = CIImage(cvPixelBuffer: currentBuffer).oriented(.right)
                 guard let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) else {
                     Task { @MainActor [weak self] in self?.isCapturing = false }
                     return
