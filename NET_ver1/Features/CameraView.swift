@@ -24,9 +24,16 @@ struct CameraView: View {
     @State private var tapReticlePoint: CGPoint?
     @State private var tapReticleID = UUID()
     @State private var pinchBaseZoom: CGFloat = 1.0
+    @State private var isZoomWheelExpanded = false
+    @State private var zoomDragStartFactor: CGFloat?
+    @State private var lastZoomHapticStep: Int = 10
+    @State private var zoomWheelDismissID = UUID()
     @State private var isMoodLongPressing = false
     @State private var isSmartSpotLongPressing = false
     @State private var isModeLongPressing = false
+
+    /// Màu vàng chuẩn của vòng Zoom trên ứng dụng Camera iPhone (`#FFD60A`).
+    private static let cameraYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
 
     @Namespace private var poseNamespace
 
@@ -139,13 +146,17 @@ struct CameraView: View {
                         ))
                 }
 
-                // Hàng trạng thái thông minh: Chỉ dẫn AI 1 dòng + Nút chuyển nhanh tiêu cự (1x / 1.5x / 2x)
-                HStack(spacing: 8) {
+                // Chỉ dẫn AI 1 dòng gọn gàng phía trên cụm nút Zoom
+                if !isZoomWheelExpanded {
                     QualityCoachOverlay(check: check)
-                    focalLengthDial
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 8)
                 }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 10)
+
+                // Cụm điều khiển Zoom chuẩn Camera iPhone đặt chính giữa màn hình (nút tròn 1× · 1.5 · 2 · 3 + vuốt mở vòng xoay thước chia vạch)
+                focalLengthDial
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 10)
 
                 // Dải chọn tư thế mỏng đặt ngay trên nút chụp (chuẩn Pro Camera, Giữ im để xem chi tiết dáng)
                 if mode.usesBodyTemplate {
@@ -419,48 +430,306 @@ struct CameraView: View {
             }
     }
 
-    // MARK: - Focal Length Dial (1x · 1.5x · 2x · 3x chuẩn Halide / iPhone Pro Camera, hỗ trợ cả chạm và vuốt ngang)
+    // MARK: - iPhone Camera Zoom System (Nút tròn 1× · 1.5 · 2 · 3 + Vòng xoay thước vạch chia 0.1× chuẩn iOS Camera)
+
+    private struct LensPreset: Identifiable {
+        let id: String
+        let shortLabel: String
+        let factor: CGFloat
+        let activeRange: ClosedRange<CGFloat>
+    }
+
+    private static let iPhoneLensPresets: [LensPreset] = [
+        LensPreset(id: "1x", shortLabel: "1", factor: 1.0, activeRange: 1.00...1.34),
+        LensPreset(id: "1.5x", shortLabel: "1.5", factor: 1.5, activeRange: 1.35...1.79),
+        LensPreset(id: "2x", shortLabel: "2", factor: 2.0, activeRange: 1.80...2.59),
+        LensPreset(id: "3x", shortLabel: "3", factor: 3.0, activeRange: 2.60...5.01)
+    ]
+
+    private func formattedZoomText(_ factor: CGFloat, includeX: Bool) -> String {
+        let roundedTenth = (factor * 10).rounded() / 10
+        let base: String
+        if abs(roundedTenth - roundedTenth.rounded()) < 0.04 {
+            base = "\(Int(roundedTenth.rounded()))"
+        } else {
+            base = String(format: "%.1f", roundedTenth)
+        }
+        return includeX ? "\(base)×" : base
+    }
+
+    private func equivalentFocalLengthMM(_ factor: CGFloat) -> Int {
+        Int((24.0 * factor).rounded())
+    }
+
+    private func applyInteractiveZoom(_ target: CGFloat, animated: Bool) {
+        let clamped = min(max(target, CameraService.minZoomFactor), CameraService.maxZoomFactor)
+        let quantizedTenth = (clamped * 10).rounded() / 10
+        let newStep = Int((quantizedTenth * 10).rounded())
+        if newStep != lastZoomHapticStep {
+            lastZoomHapticStep = newStep
+            if newStep == 10 || newStep == 15 || newStep == 20 || newStep == 30 || newStep == 50 {
+                Self.shutterFeedback.impactOccurred(intensity: 0.65)
+            } else {
+                triggerSelectionHaptic()
+            }
+        }
+        pinchBaseZoom = clamped
+        camera.setZoom(clamped, animated: animated)
+    }
+
+    private func scheduleZoomWheelAutoCollapse(after delay: TimeInterval = 1.5) {
+        let token = UUID()
+        zoomWheelDismissID = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            if zoomWheelDismissID == token && zoomDragStartFactor == nil {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                    isZoomWheelExpanded = false
+                }
+            }
+        }
+    }
 
     private var focalLengthDial: some View {
-        let presets: [(label: String, factor: CGFloat)] = [
-            ("1x", 1.0),
-            ("1.5x", 1.5),
-            ("2x", 2.0),
-            ("3x", 3.0)
-        ]
-        return HStack(spacing: 3) {
-            ForEach(presets, id: \.label) { preset in
-                let isSelected = abs(camera.zoomFactor - preset.factor) < 0.22
-                let displayLabel: String = {
-                    if isSelected && abs(camera.zoomFactor - preset.factor) >= 0.05 {
-                        return String(format: "%.1fx", camera.zoomFactor)
-                    }
-                    return preset.label
-                }()
+        ZStack {
+            if isZoomWheelExpanded {
+                iPhoneZoomWheelDial
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.92, anchor: .bottom).combined(with: .opacity),
+                        removal: .scale(scale: 0.92, anchor: .bottom).combined(with: .opacity)
+                    ))
+            } else {
+                iPhoneCompactLensBar
+                    .transition(.scale(scale: 0.94).combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Thanh nút tròn ống kính thu gọn chuẩn Camera iPhone (`1×`, `1.5`, `2`, `3`).
+    /// - Chạm nút chưa chọn: chuyển mượt tới tiêu cự đó.
+    /// - Chạm nút đang chọn hoặc giữ vuốt ngang: bung thước xoay chia vạch Camera iPhone.
+    private var iPhoneCompactLensBar: some View {
+        HStack(spacing: 6) {
+            ForEach(Self.iPhoneLensPresets) { preset in
+                let isSelected = preset.activeRange.contains(camera.zoomFactor)
+                let labelText = isSelected
+                    ? formattedZoomText(camera.zoomFactor, includeX: true)
+                    : preset.shortLabel
+
                 Button {
-                    triggerSelectionHaptic()
-                    pinchBaseZoom = preset.factor
-                    camera.setZoom(preset.factor, animated: true)
-                } label: {
-                    Text(displayLabel)
-                        .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(isSelected ? .black : .white.opacity(0.85))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background {
-                            if isSelected {
-                                Capsule().fill(Color.white)
-                            }
+                    if isSelected && abs(camera.zoomFactor - preset.factor) < 0.05 {
+                        triggerSelectionHaptic()
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            isZoomWheelExpanded = true
                         }
+                        scheduleZoomWheelAutoCollapse(after: 2.0)
+                    } else {
+                        lastZoomHapticStep = Int((preset.factor * 10).rounded())
+                        Self.shutterFeedback.impactOccurred(intensity: 0.65)
+                        pinchBaseZoom = preset.factor
+                        camera.setZoom(preset.factor, animated: true)
+                    }
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(isSelected ? Color.black.opacity(0.82) : Color.black.opacity(0.48))
+                            .frame(width: isSelected ? 36 : 29, height: isSelected ? 36 : 29)
+                            .overlay {
+                                Circle()
+                                    .strokeBorder(
+                                        isSelected ? Self.cameraYellow.opacity(0.45) : Color.white.opacity(0.14),
+                                        lineWidth: isSelected ? 1.0 : 0.6
+                                    )
+                            }
+
+                        Text(labelText)
+                            .font(.system(size: isSelected ? 12 : 11, weight: isSelected ? .bold : .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(isSelected ? Self.cameraYellow : .white.opacity(0.92))
+                            .minimumScaleFactor(0.75)
+                            .lineLimit(1)
+                            .frame(width: isSelected ? 32 : 25)
+                    }
+                    .animation(.spring(response: 0.26, dampingFraction: 0.82), value: isSelected)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(3)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
         .background(Color.black.opacity(0.42), in: Capsule())
         .overlay {
-            Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
+            Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.7)
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 6)
+                .onChanged { value in
+                    if zoomDragStartFactor == nil {
+                        zoomDragStartFactor = camera.zoomFactor
+                        lastZoomHapticStep = Int((camera.zoomFactor * 10).rounded())
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
+                            isZoomWheelExpanded = true
+                        }
+                    }
+                    let base = zoomDragStartFactor ?? camera.zoomFactor
+                    let logBase = log2(max(base, 1.0))
+                    let deltaOctaves = value.translation.width / 115.0
+                    let rawTarget = pow(2.0, logBase + deltaOctaves)
+                    applyInteractiveZoom(rawTarget, animated: false)
+                }
+                .onEnded { _ in
+                    zoomDragStartFactor = nil
+                    scheduleZoomWheelAutoCollapse(after: 1.4)
+                }
+        )
+    }
+
+    /// Vòng xoay thước vạch chia tiêu cự chuẩn Camera iPhone (`1.0×` – `5.0×` · `24mm` – `120mm`).
+    private var iPhoneZoomWheelDial: some View {
+        let minZ = CameraService.minZoomFactor
+        let maxZ = CameraService.maxZoomFactor
+        let totalLogSpan = log2(maxZ / minZ)
+        let currentProgress = min(max(log2(max(camera.zoomFactor, minZ) / minZ) / totalLogSpan, 0), 1)
+        let rulerSpanWidth: CGFloat = 320
+        let majorStops: [CGFloat] = [1.0, 1.5, 2.0, 3.0, 5.0]
+        let allTenths: [Int] = Array(10...50)
+
+        return VStack(spacing: 6) {
+            // Hàng hiển thị tiêu cự hiện tại (Vàng #FFD60A) + quy đổi tiêu cự chuẩn 35mm + nút chọn nhanh
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text(formattedZoomText(camera.zoomFactor, includeX: true))
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Self.cameraYellow)
+                    Text("· \(equivalentFocalLengthMM(camera.zoomFactor)) mm")
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.68), in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(Self.cameraYellow.opacity(0.45), lineWidth: 0.8)
+                }
+
+                Spacer(minLength: 4)
+
+                HStack(spacing: 4) {
+                    ForEach(majorStops, id: \.self) { stop in
+                        let isNearStop = abs(camera.zoomFactor - stop) < 0.08
+                        Button {
+                            lastZoomHapticStep = Int((stop * 10).rounded())
+                            Self.shutterFeedback.impactOccurred(intensity: 0.65)
+                            pinchBaseZoom = stop
+                            camera.setZoom(stop, animated: true)
+                            scheduleZoomWheelAutoCollapse(after: 1.4)
+                        } label: {
+                            Text(formattedZoomText(stop, includeX: isNearStop))
+                                .font(.system(size: 11, weight: isNearStop ? .bold : .semibold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(isNearStop ? .black : .white.opacity(0.88))
+                                .padding(.horizontal, isNearStop ? 8 : 6)
+                                .padding(.vertical, 4)
+                                .background(
+                                    isNearStop ? Self.cameraYellow : Color.white.opacity(0.12),
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+
+            // Thước vạch chia quang học (di chuyển dưới kim chỉ tâm màu vàng chuẩn Camera iPhone)
+            GeometryReader { geo in
+                let centerX = geo.size.width * 0.5
+                let currentOffset = currentProgress * rulerSpanWidth
+
+                ZStack {
+                    // Các vạch chia 0.1x di chuyển theo mức zoom
+                    ForEach(allTenths, id: \.self) { tenth in
+                        let z = CGFloat(tenth) / 10.0
+                        let tickProgress = log2(z / minZ) / totalLogSpan
+                        let xPos = centerX + (tickProgress * rulerSpanWidth) - currentOffset
+                        let isMajor = (tenth == 10 || tenth == 15 || tenth == 20 || tenth == 30 || tenth == 40 || tenth == 50)
+                        let isHalf = (tenth % 5 == 0)
+                        let showTick = z <= 2.5 || tenth % 2 == 0 || isMajor
+
+                        if showTick && xPos >= -12 && xPos <= geo.size.width + 12 {
+                            VStack(spacing: 3) {
+                                Capsule()
+                                    .fill(isMajor ? Color.white : Color.white.opacity(isHalf ? 0.65 : 0.36))
+                                    .frame(width: isMajor ? 1.8 : 1.1, height: isMajor ? 13 : (isHalf ? 9 : 6))
+
+                                if isMajor {
+                                    Text(formattedZoomText(z, includeX: false))
+                                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                        .monospacedDigit()
+                                        .foregroundStyle(abs(camera.zoomFactor - z) < 0.08 ? Self.cameraYellow : .white.opacity(0.78))
+                                } else {
+                                    Spacer().frame(height: 11)
+                                }
+                            }
+                            .position(x: xPos, y: geo.size.height * 0.54)
+                        }
+                    }
+
+                    // Kim chỉ cố định ở chính giữa màu vàng Camera iPhone (#FFD60A)
+                    VStack(spacing: 1) {
+                        Image(systemName: "arrowtriangle.down.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Self.cameraYellow)
+                        Capsule()
+                            .fill(Self.cameraYellow)
+                            .frame(width: 2.4, height: 17)
+                            .shadow(color: .black.opacity(0.6), radius: 2)
+                        Spacer().frame(height: 10)
+                    }
+                    .position(x: centerX, y: geo.size.height * 0.48)
+                }
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.14),
+                            .init(color: .black, location: 0.86),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+            }
+            .frame(height: 36)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if zoomDragStartFactor == nil {
+                            zoomDragStartFactor = camera.zoomFactor
+                            lastZoomHapticStep = Int((camera.zoomFactor * 10).rounded())
+                        }
+                        let base = zoomDragStartFactor ?? camera.zoomFactor
+                        let logBase = log2(max(base, 1.0))
+                        let deltaOctaves = value.translation.width / 120.0
+                        let rawTarget = pow(2.0, logBase + deltaOctaves)
+                        applyInteractiveZoom(rawTarget, animated: false)
+                    }
+                    .onEnded { _ in
+                        zoomDragStartFactor = nil
+                        scheduleZoomWheelAutoCollapse(after: 1.4)
+                    }
+            )
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: 340)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
         }
     }
 
@@ -729,30 +998,29 @@ struct CameraView: View {
                 }
             }
 
-            // 2. Thanh trượt Zoom mượt (1.0x - 3.0x)
+            // 2. Thanh trượt Zoom mượt (1.0× - 5.0× · 24mm - 120mm)
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Tiêu cự ống kính (Zoom)")
                         .font(.system(size: 11.5, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
                     Spacer()
-                    Text(String(format: "%.1fx", camera.zoomFactor))
+                    Text("\(formattedZoomText(camera.zoomFactor, includeX: true)) · \(equivalentFocalLengthMM(camera.zoomFactor)) mm")
                         .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Self.cameraYellow)
                         .monospacedDigit()
                 }
                 Slider(
                     value: Binding(
                         get: { camera.zoomFactor },
                         set: { newValue in
-                            pinchBaseZoom = newValue
-                            camera.setZoom(newValue, animated: false)
+                            applyInteractiveZoom(newValue, animated: false)
                         }
                     ),
-                    in: 1.0...3.0,
+                    in: CameraService.minZoomFactor...CameraService.maxZoomFactor,
                     step: 0.05
                 )
-                .tint(Color.netGreen)
+                .tint(Self.cameraYellow)
             }
 
             // 3. Nút bật/tắt Tự chụp khi khớp dáng + Quét lại góc đẹp
@@ -1041,11 +1309,17 @@ struct CameraView: View {
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { scale in
-                    let target = min(max(pinchBaseZoom * scale, 1.0), 3.0)
-                    camera.setZoom(target, animated: false)
+                    if !isZoomWheelExpanded {
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
+                            isZoomWheelExpanded = true
+                        }
+                    }
+                    let target = min(max(pinchBaseZoom * scale, CameraService.minZoomFactor), CameraService.maxZoomFactor)
+                    applyInteractiveZoom(target, animated: false)
                 }
                 .onEnded { _ in
                     pinchBaseZoom = camera.zoomFactor
+                    scheduleZoomWheelAutoCollapse(after: 1.3)
                 }
         )
     }

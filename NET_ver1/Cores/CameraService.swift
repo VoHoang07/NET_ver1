@@ -480,7 +480,10 @@ final class CameraService: NSObject, ObservableObject {
 
 // MARK: - Zoom
 
-    /// Đặt mức zoom, kẹp trong khoảng camera cho phép.
+    nonisolated static let minZoomFactor: CGFloat = 1.0
+    nonisolated static let maxZoomFactor: CGFloat = 5.0
+
+    /// Đặt mức zoom, kẹp trong khoảng camera cho phép (`1.0x ... 5.0x` chuẩn Camera iPhone).
     ///
     /// ## Vì sao bật chống rung
     ///
@@ -490,13 +493,12 @@ final class CameraService: NSObject, ObservableObject {
     ///
     /// - Parameters:
     ///   - factor: mức zoom mong muốn. Giá trị dưới 1 bị ép về 1.
-    ///   - animated: xoay mượt hay nhảy thẳng. `false` khi app tự chọn zoom theo
-    ///     tư thế — nhảy thẳng nhanh và không gây giật.
+    ///   - animated: xoay mượt hay nhảy thẳng. `false` khi đang vuốt thước zoom hoặc pinch 2 ngón.
     func setZoom(_ factor: CGFloat, animated: Bool = false) {
-        let clampedTarget = min(max(factor, 1.0), 3.0)
+        let clampedTarget = min(max(factor, Self.minZoomFactor), Self.maxZoomFactor)
         currentZoomFactorStorage = clampedTarget
         if animated {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
                 zoomFactor = clampedTarget
             }
         } else {
@@ -508,7 +510,7 @@ final class CameraService: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self, !self.isExternalARActiveFlag, let device = self.captureDevice else { return }
 
-            let upper = min(device.activeFormat.videoMaxZoomFactor, 3.0)
+            let upper = min(device.activeFormat.videoMaxZoomFactor, Self.maxZoomFactor)
             let target = min(clampedTarget, upper)
 
             do {
@@ -516,7 +518,7 @@ final class CameraService: NSObject, ObservableObject {
                 defer { device.unlockForConfiguration() }
 
                 if animated {
-                    device.ramp(toVideoZoomFactor: target, withRate: 4)
+                    device.ramp(toVideoZoomFactor: target, withRate: 8)
                 } else {
                     device.videoZoomFactor = target
                 }
