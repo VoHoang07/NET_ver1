@@ -480,10 +480,10 @@ final class CameraService: NSObject, ObservableObject {
 
 // MARK: - Zoom
 
-    nonisolated static let minZoomFactor: CGFloat = 1.0
-    nonisolated static let maxZoomFactor: CGFloat = 5.0
+    nonisolated static let minZoomFactor: CGFloat = 0.5
+    nonisolated static let maxZoomFactor: CGFloat = 10.0
 
-    /// Đặt mức zoom, kẹp trong khoảng camera cho phép (`1.0x ... 5.0x` chuẩn Camera iPhone).
+    /// Đặt mức zoom, kẹp trong khoảng camera cho phép (`0.5x ... 10.0x` chuẩn Camera iPhone).
     ///
     /// ## Vì sao bật chống rung
     ///

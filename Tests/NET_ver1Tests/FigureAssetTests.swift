@@ -984,11 +984,11 @@ final class FigureAssetTests: XCTestCase {
         service.setZoom(3.0, animated: true)
         XCTAssertEqual(service.zoomFactor, 3.0, accuracy: 0.001)
 
-        // Kẹp trong dải chuẩn Camera iPhone 1.0x ... 5.0x
-        service.setZoom(0.4, animated: false)
+        // Kẹp trong dải chuẩn Camera iPhone 0.5x ... 10.0x
+        service.setZoom(0.2, animated: false)
         XCTAssertEqual(service.zoomFactor, CameraService.minZoomFactor, accuracy: 0.001)
 
-        service.setZoom(9.0, animated: false)
+        service.setZoom(15.0, animated: false)
         XCTAssertEqual(service.zoomFactor, CameraService.maxZoomFactor, accuracy: 0.001)
     }
 

@@ -1482,6 +1482,12 @@ private struct TranslucentARViewRepresentable: UIViewRepresentable {
         }
 
         coordinator.updateRigVisibility()
+        if coordinator.isUsingWorldTracking {
+            let subOneScale = Float(min(max(zoomFactor, 0.5), 1.0))
+            coordinator.rigContainer?.scale = SIMD3<Float>(repeating: subOneScale)
+        } else {
+            coordinator.rigContainer?.scale = .one
+        }
 
         // Nếu người dùng chạm vào sàn để đặt lại vị trí mẫu 3D (Tap-to-Place)
         if let tapID = floorTapID, tapID != coordinator.lastHandledTapID, let tapPoint = floorTapPoint {
