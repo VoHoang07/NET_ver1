@@ -1,17 +1,95 @@
-# NÉT — Trợ Lý Hướng Dẫn Tạo Dáng & Bố Cục Nhiếp Ảnh AR (iOS)
+# NET (NET_ver1) — iOS AR Pose Guidance & Real-Time Posture Coaching
 
-Ứng dụng iOS hỗ trợ chụp ảnh chân dung và hướng dẫn tạo dáng trực quan trong không gian thực tế bằng **ARKit**, **RealityKit**, **Vision** và **SwiftUI**.
+An iOS camera application that projects life-size 3D human pose templates onto real-world floor surfaces and coaches users into portrait poses using on-device computer vision. Built with **Swift 6**, **SwiftUI**, **ARKit**, **RealityKit**, and the **Vision** framework.
 
-## Tính năng nổi bật
-- **Real-world Floor Anchoring & Smart Auto-Placement:** Phát hiện mặt sàn ngang thực tế (`ARWorldTrackingConfiguration`), phân tích 15 điểm ứng viên trên dải sàn mở để tự động đặt mẫu 3D vào góc đứng thoáng đẹp nhất theo bố cục 1/3.
-- **Photorealistic 3D Pose Guide:** Hệ thống các tư thế 3D USDZ tỷ lệ người thật kèm bóng đổ tiếp xúc (`GroundShadowBuilder`), tự xoay góc 3/4 hướng về ống kính và nội suy chuyển động mượt (`simd_mix` & `simd_slerp`).
-- **Real-time Posture Coaching & Auto-Capture:** Phân tích khung xương thời gian thực bằng Vision Framework trên thiết bị, chấm điểm bố cục/ánh sáng và tự động chụp khi khớp dáng.
-- **Minimalist Pro Camera UI:** Khung ngắm tràn viền, giao diện kính mờ tinh gọn, bộ lọc màu phim (`Mood`) và tương thích đầy đủ với cả iPhone lẫn iPad.
+---
 
-## Yêu cầu hệ thống
-- iOS 17.0+
-- Xcode 16+ / Swift 6 Strict Concurrency
+## Key Features
 
-## Bản quyền & Quyền riêng tư
-- **Bản quyền:** © 2026 Võ Vũ Minh Hoàng. All rights reserved.
-- **Chính sách bảo mật:** Xem tại [docs/PRIVACY-POLICY.md](docs/PRIVACY-POLICY.md).
+- **Real-World Floor Anchoring & Smart Auto-Placement (`SceneComposer`, `CameraView`)**
+  - Detects horizontal floor planes via `ARWorldTrackingConfiguration`.
+  - Evaluates 15 candidate positions across open floor space to automatically place the 3D mannequin at an optimal rule-of-thirds composition point.
+- **Life-Size 3D Pose Templates (`FigureAssetLoader`, `FigureBuilders`, `FurnitureBuilder`)**
+  - Ships with static baked `.usdz` 3D character meshes (`pose-standing-straight`, `pose-standing-hip`, `pose-standing-aside`, `pose-seated-straight`, `pose-seated-lean`, `pose-seated-chin`).
+  - Procedural contact shadows (`GroundShadowBuilder`), translucent shader materials (`FigureMaterial`), and smooth quaternion/vector interpolation (`simd_mix` & `simd_slerp`) rotated at a natural 3/4 angle toward the camera lens.
+- **On-Device Posture Matching & Auto-Capture (`FrameAnalyzer`, `PostureMatch`, `AutoCapture`)**
+  - Runs real-time 2D/3D skeletal pose estimation using Apple's `Vision` framework directly on the Neural Engine.
+  - Computes joint-angle similarity, framing safety (`SafeArea`), and lighting quality (`CaptureCheck`, `QualityCoachOverlay`) to trigger hands-free shutter capture when the subject matches the target pose.
+- **Minimalist Pro Camera Interface (`CameraChrome`, `GalleryView`)**
+  - Edge-to-edge viewfinder, frosted glass controls, rule-of-thirds grid overlay (`GridOverlay`), film mood presets, and full layout support for both iPhone and iPad.
+
+---
+
+## Architecture & Tech Stack
+
+The codebase follows **Clean Architecture** with **Swift 6 Strict Concurrency** (`@MainActor` UI isolation and thread-safe background frame analysis):
+
+```text
+NET_ver1/
+├── App/
+│   ├── NetApp.swift                # Application entry point & lifecycle
+│   └── RootView.swift              # Root navigation & permission flow
+├── Cores/
+│   ├── CameraService.swift         # AVFoundation & ARSession capture pipeline
+│   ├── FrameAnalyzer.swift         # Vision framework skeletal pose extraction
+│   ├── AnalysisConfiguration.swift # Frame throttling & confidence thresholds
+│   ├── GridOverlay.swift           # Rule-of-thirds & composition overlays
+│   ├── NetColors.swift             # Design system color tokens
+│   └── PhotoLibraryAuth.swift      # Photos framework authorization handler
+├── Domain/
+│   ├── PoseTemplate.swift          # Pose metadata & joint angle definitions
+│   ├── PostureMatch.swift          # Cosine/Euclidean skeletal matching engine
+│   ├── AutoCapture.swift           # Stability timer & auto-shutter state machine
+│   ├── SceneComposer.swift         # AR raycasting & 15-point floor scoring
+│   ├── FigureAssetLoader.swift     # Asynchronous USDZ entity loader & wrapper
+│   ├── FigureMaterial.swift        # Translucent RealityKit material generator
+│   └── CaptureCheck.swift          # Exposure, framing, and distance evaluator
+├── Features/
+│   ├── CameraView.swift            # Main AR camera viewport
+│   ├── CameraChrome.swift          # Shutter, pose carousel, and HUD controls
+│   ├── QualityCoachOverlay.swift   # Real-time posture & composition feedback pill
+│   ├── BodyTemplateOverlay.swift   # 2D skeletal alignment overlay
+│   └── GalleryView.swift           # In-app photo review & comparison
+└── Assets/Resources/               # Baked 3D USDZ pose models
+```
+
+| Layer | Technologies |
+|---|---|
+| **Language & Concurrency** | Swift 6, Swift Concurrency (`async/await`, Actors) |
+| **UI Framework** | SwiftUI |
+| **Augmented Reality & 3D** | ARKit (`ARWorldTrackingConfiguration`), RealityKit, USDZ |
+| **Computer Vision** | Apple Vision Framework (`VNDetectHumanBodyPoseRequest`) |
+| **Media & Storage** | AVFoundation, PhotosUI / PHPhotoLibrary |
+| **Testing** | XCTest (`Tests/`) |
+
+---
+
+## Getting Started
+
+### Prerequisites
+- **macOS** with **Xcode 16.0+**
+- **Physical iPhone or iPad** running **iOS 17.0+** (ARKit world tracking and rear camera feed require a physical device with an A12 Bionic chip or newer).
+
+### Installation & Run
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/VoHoang07/NET_ver1.git
+   cd NET_ver1
+   ```
+2. Open the project in Xcode:
+   ```bash
+   open NET_ver1.xcodeproj
+   ```
+3. In Xcode, select the **NET_ver1** target -> **Signing & Capabilities**, and choose your Apple Development Team.
+4. Connect your iPhone/iPad, select it as the run destination, and press **Cmd + R** to build and launch.
+5. Run unit tests via **Cmd + U** or CLI:
+   ```bash
+   xcodebuild test -project NET_ver1.xcodeproj -scheme NET_ver1 -destination 'platform=iOS Simulator,name=iPhone 16'
+   ```
+
+---
+
+## License & Privacy
+
+- **Privacy:** All camera frames and skeletal pose computations execute 100% on-device. No images or biometric data ever leave the user's device. See [docs/PRIVACY-POLICY.md](docs/PRIVACY-POLICY.md).
+- **Author:** Vo Vu Minh Hoang ([@VoHoang07](https://github.com/VoHoang07))
